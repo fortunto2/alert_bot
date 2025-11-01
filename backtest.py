@@ -1,13 +1,11 @@
 """
-Universal VectorBT backtest for OKX perpetual futures with fresh data.
-Downloads latest data via data_loader, backtests with configurable thresholds.
+Universal VectorBT backtest using REAL signals from trained strategy.
+Uses actual entry/exit from initial.py with dynamic sizing and stop loss.
 
 Usage:
-    uv run python backtest.py BTC                    # Test BTC last 90 days
-    uv run python backtest.py TRUMP --days 7         # Test TRUMP last 7 days
-    uv run python backtest.py ETH --days 30          # Test ETH last 30 days
-    uv run python backtest.py SOL XRP AVAX           # Test multiple symbols
-    uv run python backtest.py BTC --fresh            # Force re-download data
+    uv run python backtest.py BTC                    # Test BTC, 90 days
+    uv run python backtest.py TRUMP --days 7         # Test TRUMP, 7 days
+    uv run python backtest.py ETH SOL XRP --fresh    # Fresh data
 """
 
 from __future__ import annotations
@@ -26,29 +24,19 @@ from dotenv import load_dotenv
 # Add alert_bot to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data_loader import fetch_crypto_data
-from initial import FuturesTradingStrategy
+from data_loader_futures import fetch_crypto_data
+from initial import run_experiment
 
 # Load environment
 load_dotenv()
 
 
 def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.DataFrame:
-    """
-    Fetch OKX perpetual futures data using data_loader.
-
-    Args:
-        symbol: Crypto symbol (BTC, ETH, SOL, etc.)
-        days: How many days of data to fetch
-        force: Force re-download even if cached
-
-    Returns:
-        DataFrame with OHLCV data
-    """
+    """Fetch OKX perpetual futures data using data_loader."""
 
     print(f"📥 Fetching {symbol}/USDT perpetual futures data...")
 
-    # Determine period based on days
+    # Determine period
     if days <= 7:
         period = "1mo"
     elif days <= 30:
@@ -60,11 +48,9 @@ def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.D
     else:
         period = "1y"
 
-    # Use Yahoo Finance symbol format (data_loader converts to OKX if needed)
     yf_symbol = f"{symbol}-USD"
 
     try:
-        # Fetch data - this uses caching smart logic
         df = fetch_crypto_data(yf_symbol, period=period, interval="1h", force_refresh=force)
 
         # Set datetime as index
@@ -79,67 +65,67 @@ def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.D
         df_subset = df[df.index >= cutoff_date].copy()
 
         if len(df_subset) < 24:
-            print(f"   ⚠️  Only {len(df_subset)} candles, using all available data...")
-            df_subset = df.tail(max(168, len(df)))  # At least 1 week
+            print(f"   ⚠️  Only {len(df_subset)} candles, using all available...")
+            df_subset = df.tail(max(168, len(df)))
 
-        print(f"   ✅ Loaded {len(df_subset)} candles ({len(df_subset) / 24:.1f} days)")
+        print(f"   ✅ {len(df_subset)} candles ({len(df_subset) / 24:.1f} days)")
         print(f"   📅 {df_subset.index[0].strftime('%Y-%m-%d %H:%M')} → {df_subset.index[-1].strftime('%Y-%m-%d %H:%M')}")
         print(f"   💵 ${df_subset['close'].min():.4f} - ${df_subset['close'].max():.4f}")
 
         return df_subset
 
     except Exception as e:
-        print(f"   ❌ Error fetching {yf_symbol}: {e}")
+        print(f"   ❌ Error: {e}")
         return None
 
 
 def run_backtest(symbol: str, df: pd.DataFrame) -> dict:
-    """Run VectorBT backtest with signals from gen11-47 strategy."""
+    """
+    Run VectorBT backtest using REAL signals from trained strategy.
+    Uses actual entry/exit + stop loss + dynamic sizing from initial.py
+    """
 
     print(f"\n{'='*70}")
-    print(f"BACKTEST: {symbol}/USDT Perpetual Futures")
+    print(f"BACKTEST: {symbol}/USDT (Using REAL Trained Signals)")
     print(f"{'='*70}")
 
     try:
-        print(f"✅ Data: {len(df)} candles")
-        print(f"   Period: {len(df) / 24:.1f} days")
+        print(f"✅ Data: {len(df)} candles ({len(df) / 24:.1f} days)")
 
-        # Run gen11-47 strategy
-        strategy = FuturesTradingStrategy(df)
+        # Run the ACTUAL trained strategy from initial.py
+        # This returns DataFrame with:
+        # - entry_signal, exit_signal (from trained strategy)
+        # - stop_loss_pct (dynamic ATR-based)
+        # - position_size (dynamic sizing)
+        # - ALL intermediate features
+        print("   Running trained gen11-47 strategy...")
+        result_df = run_experiment(df)
 
-        crash_prob = strategy.crash_probability
-        trend_strength = strategy.trend_strength
+        # Extract REAL signals from trained strategy
+        entries = result_df['entry_signal'].fillna(False).astype(bool)
+        exits = result_df['exit_signal'].fillna(False).astype(bool)
+        stop_percents = result_df['stop_loss_pct'].fillna(3.0)  # Default 3% if NaN
+        position_sizes = result_df['position_size'].fillna(1.0)  # Default 1x if NaN
 
-        print(f"\n📊 STRATEGY METRICS:")
-        print(f"   Crash Prob: {crash_prob.mean():.1%} avg (max {crash_prob.max():.1%})")
-        print(f"   Trend Strength: {trend_strength.mean():.1%} avg (max {trend_strength.max():.1%})")
+        print(f"\n📊 STRATEGY SIGNALS:")
+        print(f"   Entry signals: {entries.sum()}")
+        print(f"   Exit signals: {exits.sum()}")
+        print(f"   Avg stop loss: {stop_percents.mean():.2f}%")
+        print(f"   Avg position size: {position_sizes.mean():.2f}x")
 
-        # Get thresholds from .env or use defaults
-        entry_trend = float(os.environ.get('BACKTEST_ENTRY_TREND', '0.5'))
-        entry_crash = float(os.environ.get('BACKTEST_ENTRY_CRASH', '0.35'))
-        exit_crash = float(os.environ.get('BACKTEST_EXIT_CRASH', '0.40'))
-        exit_trend = float(os.environ.get('BACKTEST_EXIT_TREND', '0.30'))
-
-        # Generate entry/exit signals
-        entries = (trend_strength > entry_trend) & (crash_prob < entry_crash)
-        exit_crash_sig = crash_prob > exit_crash
-        exit_trend_sig = trend_strength < exit_trend
-        exits = exit_crash_sig | exit_trend_sig
-
-        print(f"\n📈 SIGNALS:")
-        print(f"   Entry: trend > {entry_trend:.2f} AND crash < {entry_crash:.2f} → {entries.sum()} signals")
-        print(f"   Exit: crash > {exit_crash:.2f} OR trend < {exit_trend:.2f} → {exits.sum()} signals")
-        print(f"   Ratio: {exits.sum() / max(entries.sum(), 1):.2f}x exits per entry")
-
-        # Run VectorBT portfolio
-        price = df['close'].values
+        # Get config from .env
         init_cash = float(os.environ.get('BACKTEST_INIT_CASH', '10000'))
         fees = float(os.environ.get('BACKTEST_FEES', '0.001'))
+
+        # Run VectorBT Portfolio with REAL signals + dynamic sizing + stop loss
+        price = df['close'].values
 
         pf = vbt.Portfolio.from_signals(
             close=price,
             entries=entries.values,
             exits=exits.values,
+            size=position_sizes.values,      # Dynamic sizing from strategy!
+            sl_stop=stop_percents.values,    # Dynamic stop loss from strategy!
             init_cash=init_cash,
             fees=fees,
             freq='1h'
@@ -159,12 +145,19 @@ def run_backtest(symbol: str, df: pd.DataFrame) -> dict:
         num_trades = len(pf.trades.records) if hasattr(pf.trades, 'records') else 0
         final_value = pf.final_value()
 
-        # Buy & hold comparison
+        # Buy & hold
         buyhold_return = (price[-1] / price[0]) - 1
         outperformance = total_return - buyhold_return
 
+        # Check strategy features
+        crash_prob = result_df['crash_probability']
+        print(f"\n📈 STRATEGY FEATURES:")
+        print(f"   Crash Prob: {crash_prob.mean():.1%} avg (max {crash_prob.max():.1%})")
+        print(f"   Market Regime: {result_df.get('market_regime', 'N/A').mode()[0] if 'market_regime' in result_df else 'N/A'}")
+
         print(f"\n🚀 RESULTS:")
         print(f"   Strategy: {total_return:+.2%}")
+        print(f"   Annualized: {annual_return:+.2%}")
         print(f"   Buy & Hold: {buyhold_return:+.2%}")
         print(f"   Outperformance: {outperformance:+.2%}")
         print(f"   Sharpe: {sharpe_ratio:.2f}")
@@ -205,12 +198,11 @@ def main():
     """Main entry point with CLI arguments."""
 
     parser = argparse.ArgumentParser(
-        description="VectorBT backtest for OKX perpetual futures with fresh data",
+        description="VectorBT backtest using REAL trained signals from gen11-47",
         epilog="Examples:\n"
                "  python backtest.py BTC\n"
                "  python backtest.py TRUMP --days 7\n"
-               "  python backtest.py ETH SOL XRP\n"
-               "  python backtest.py BTC --fresh",
+               "  python backtest.py ETH SOL XRP --fresh",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
@@ -225,7 +217,7 @@ def main():
         '--days',
         type=int,
         default=90,
-        help='Days to backtest (default: 90). Min recommended: 7'
+        help='Days to backtest (default: 90)'
     )
 
     parser.add_argument(
@@ -243,40 +235,39 @@ def main():
 
     args = parser.parse_args()
 
-    # Override env if provided
     if args.init_cash:
         os.environ['BACKTEST_INIT_CASH'] = str(args.init_cash)
 
     print(f"\n{'#'*70}")
-    print(f"VectorBT BACKTEST - OKX Perpetual Futures")
+    print(f"VectorBT BACKTEST - Using REAL Trained Signals")
     print(f"{'#'*70}\n")
 
     print(f"⚙️  CONFIG:")
+    print(f"   Strategy: gen11-47 (from initial.py)")
     print(f"   Symbols: {', '.join(args.symbols)}")
     print(f"   Period: {args.days} days")
-    print(f"   Fresh data: {'Yes (re-downloading)' if args.fresh else 'Smart cache'}")
+    print(f"   Fresh data: {'Yes' if args.fresh else 'Smart cache'}")
     print(f"   Init cash: ${os.environ.get('BACKTEST_INIT_CASH', '10000')}")
+    print(f"   Features: Dynamic sizing + Stop loss + Real signals")
     print()
 
     all_results = []
 
     # Backtest each symbol
     for symbol in args.symbols:
-        # Fetch data
         df = fetch_futures_data(symbol, days=args.days, force=args.fresh)
 
         if df is not None and len(df) > 0:
-            # Run backtest
             result = run_backtest(symbol, df)
             if result:
                 all_results.append(result)
         else:
             print(f"❌ Skipping {symbol} - no data")
 
-    # Summary table
+    # Summary
     if all_results:
         print(f"\n\n{'='*80}")
-        print("SUMMARY")
+        print("SUMMARY - REAL Trained Strategy Performance")
         print(f"{'='*80}\n")
 
         results_df = pd.DataFrame(all_results).sort_values('outperformance', ascending=False)
@@ -294,8 +285,8 @@ def main():
         avg_profit = results_df['profit'].mean()
         print(f"{'AVERAGE':<10} | {'':<12} | {'':<12} | {avg_out:>10.2%} | {'':<9} | {'':<8} | ${avg_profit:>9,.0f}")
 
-        print(f"\n✅ Tested {len(all_results)} symbols")
-        print(f"⚡ VectorBT: Ultra-fast backtesting engine")
+        print(f"\n✅ Tested {len(all_results)} symbols using REAL trained signals")
+        print(f"⚡ VectorBT + gen11-47 strategy")
 
 
 if __name__ == "__main__":

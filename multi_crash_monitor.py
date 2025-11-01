@@ -101,18 +101,27 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str, parse_mode
         return False
 
 
-def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500):
+def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, thresholds: dict = None):
     """
     Check crash probability for a single symbol.
 
     Args:
         symbol: Trading pair symbol (e.g., "BTC-USD")
         lookback_hours: How many hours of data to analyze
+        thresholds: dict with 'pre_crash', 'early_warning', 'crisis' thresholds
 
     Returns:
         dict with crash metrics, or None if error
     """
     try:
+        # Default thresholds if not provided
+        if thresholds is None:
+            thresholds = {
+                'pre_crash': 0.2,
+                'early_warning': 0.4,
+                'crisis': 0.6
+            }
+
         # Check cache age
         cache_age = get_cache_age(symbol)
         force_refresh = cache_age > CACHE_EXPIRY
@@ -148,12 +157,10 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500):
 
         crash_prob = float(system.crash_probability.iloc[latest_idx])
 
-        # Map new alert levels to old names for compatibility
-        # New: early_crash_warning (0.3-0.5), mid_crash_phase (0.5-0.7), late_crash_phase (>0.7)
-        # Old: pre_crash_warning (>=0.2), early_warning (>=0.4), crisis_alert (>=0.6)
-        pre_crash_warning = bool(crash_prob >= 0.2)
-        early_warning = bool(crash_prob >= 0.4)
-        crisis_alert = bool(crash_prob >= 0.6)
+        # Map crash probability to alert levels using configurable thresholds
+        pre_crash_warning = bool(crash_prob >= thresholds['pre_crash'])
+        early_warning = bool(crash_prob >= thresholds['early_warning'])
+        crisis_alert = bool(crash_prob >= thresholds['crisis'])
 
         # Additional metrics
         rsi = float(system.rsi.iloc[latest_idx])
@@ -209,8 +216,16 @@ def format_price(price: float) -> str:
         return f"${price:.8f}"
 
 
-def format_consolidated_alert(all_metrics: list, min_probability: float) -> str:
+def format_consolidated_alert(all_metrics: list, min_probability: float, thresholds: dict = None) -> str:
     """Format consolidated alert message for all cryptocurrencies."""
+
+    # Default thresholds if not provided
+    if thresholds is None:
+        thresholds = {
+            'pre_crash': 0.2,
+            'early_warning': 0.4,
+            'crisis': 0.6
+        }
 
     # Filter to only alerts that meet threshold
     alerts = [m for m in all_metrics if m and m['crash_probability'] >= min_probability]
@@ -228,14 +243,14 @@ def format_consolidated_alert(all_metrics: list, min_probability: float) -> str:
         # Get crypto name (remove -USD suffix)
         crypto_name = metrics['symbol'].replace('-USD', '')
 
-        # Determine alert level
-        if metrics['crisis_alert']:
+        # Determine alert level based on configurable thresholds
+        if metrics['crash_probability'] >= thresholds['crisis']:
             alert_emoji = "🔴"
             alert_level = "КРИТИЧЕСКИЙ"
-        elif metrics['early_warning']:
+        elif metrics['crash_probability'] >= thresholds['early_warning']:
             alert_emoji = "🟠"
             alert_level = "ВЫСОКИЙ"
-        elif metrics['pre_crash_warning']:
+        elif metrics['crash_probability'] >= thresholds['pre_crash']:
             alert_emoji = "🟡"
             alert_level = "СРЕДНИЙ"
         else:
@@ -265,18 +280,19 @@ def format_consolidated_alert(all_metrics: list, min_probability: float) -> str:
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]
+    crash_prob = highest_alert['crash_probability']
     message += "⚡ *Рекомендации:*\n"
 
-    if highest_alert['crisis_alert']:
-        message += "• 🔴 *КРИТИЧЕСКИЙ РИСК ПАДЕНИЯ* (≥60%)\n"
+    if crash_prob >= thresholds['crisis']:
+        message += f"• 🔴 *КРИТИЧЕСКИЙ РИСК ПАДЕНИЯ* (≥{thresholds['crisis']:.0%})\n"
         message += "• 🔴 СПОТ: Продать имеющиеся монеты / НЕ ПОКУПАТЬ\n"
         message += "• 🔴 ФЬЮЧЕРСЫ: Открыть SHORT / Закрыть LONG\n"
-    elif highest_alert['early_warning']:
-        message += "• 🟠 *ВЫСОКИЙ РИСК ПАДЕНИЯ* (40-60%)\n"
+    elif crash_prob >= thresholds['early_warning']:
+        message += f"• 🟠 *ВЫСОКИЙ РИСК ПАДЕНИЯ* ({thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%})\n"
         message += "• 🟠 СПОТ: Сократить позиции / НЕ ПОКУПАТЬ\n"
         message += "• 🟠 ФЬЮЧЕРСЫ: Рассмотреть SHORT / Установить стопы\n"
-    elif highest_alert['pre_crash_warning']:
-        message += "• 🟡 *СРЕДНИЙ РИСК* (20-40%)\n"
+    elif crash_prob >= thresholds['pre_crash']:
+        message += f"• 🟡 *СРЕДНИЙ РИСК* ({thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%})\n"
         message += "• 🟡 СПОТ: Осторожно с покупками\n"
         message += "• 🟡 ФЬЮЧЕРСЫ: Не открывать LONG без стопов\n"
 
@@ -299,8 +315,15 @@ def main():
     bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
 
-    # Alert thresholds
-    min_probability = float(os.environ.get('CRASH_ALERT_THRESHOLD', '0.2'))
+    # Alert thresholds - load from environment or use defaults
+    thresholds = {
+        'pre_crash': float(os.environ.get('CRASH_ALERT_PRE_CRASH', '0.2')),
+        'early_warning': float(os.environ.get('CRASH_ALERT_EARLY_WARNING', '0.4')),
+        'crisis': float(os.environ.get('CRASH_ALERT_CRISIS', '0.6'))
+    }
+
+    # Minimum probability for sending any alert
+    min_probability = float(os.environ.get('CRASH_ALERT_THRESHOLD', str(thresholds['pre_crash'])))
 
     if not bot_token or not chat_id:
         print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")
@@ -309,10 +332,11 @@ def main():
     print(f"🔍 Checking crash probability for {len(TOP_CRYPTOS)} cryptocurrencies...")
     print(f"Monitored: {', '.join([c.replace('-USD', '') for c in TOP_CRYPTOS])}")
     print(f"Alert threshold: {min_probability:.2%}")
+    print(f"Alert levels: 🟡 ≥{thresholds['pre_crash']:.0%} | 🟠 ≥{thresholds['early_warning']:.0%} | 🔴 ≥{thresholds['crisis']:.0%}")
     print()
     print("ℹ️  Data source: SPOT prices (Yahoo Finance)")
     print("ℹ️  Crash probability = risk of PRICE DROP:")
-    print("   🔴 ≥60% = SELL SPOT/SHORT FUTURES | 🟠 40-60% = REDUCE | 🟡 20-40% = CAUTION | 🟢 <20% = NORMAL")
+    print(f"   🔴 ≥{thresholds['crisis']:.0%} = SELL SPOT/SHORT FUTURES | 🟠 {thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%} = REDUCE | 🟡 {thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%} = CAUTION | 🟢 <{thresholds['pre_crash']:.0%} = NORMAL")
     print()
 
     try:
@@ -320,9 +344,9 @@ def main():
         all_metrics = []
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            # Submit all tasks
+            # Submit all tasks with thresholds
             future_to_symbol = {
-                executor.submit(check_crash_probability_for_symbol, symbol): symbol
+                executor.submit(check_crash_probability_for_symbol, symbol, thresholds=thresholds): symbol
                 for symbol in TOP_CRYPTOS
             }
 
@@ -345,9 +369,10 @@ def main():
 
         for metrics in sorted(all_metrics, key=lambda x: x['crash_probability'], reverse=True):
             crypto_name = metrics['symbol'].replace('-USD', '')
-            alert_status = "🔴 CRISIS" if metrics['crisis_alert'] else \
-                          "🟠 HIGH" if metrics['early_warning'] else \
-                          "🟡 MEDIUM" if metrics['pre_crash_warning'] else \
+            prob = metrics['crash_probability']
+            alert_status = "🔴 CRISIS" if prob >= thresholds['crisis'] else \
+                          "🟠 HIGH" if prob >= thresholds['early_warning'] else \
+                          "🟡 MEDIUM" if prob >= thresholds['pre_crash'] else \
                           "🟢 LOW"
 
             # Format price with appropriate precision
@@ -363,7 +388,7 @@ def main():
             print(f"\n⚠️ ALERT: {len(alerts_to_send)} cryptocurrencies above threshold!")
             print("📤 Sending Telegram notification...")
 
-            message = format_consolidated_alert(all_metrics, min_probability)
+            message = format_consolidated_alert(all_metrics, min_probability, thresholds=thresholds)
 
             if message and send_telegram_message(bot_token, chat_id, message):
                 print("✅ Alert sent successfully!")

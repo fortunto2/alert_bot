@@ -226,6 +226,58 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, t
         return None
 
 
+def get_adaptive_exit_thresholds(metrics: dict) -> dict:
+    """
+    Get adaptive exit thresholds based on market regime.
+    Reads base values from .env, then adjusts for regime.
+    Used for trading strategies to know when to exit positions.
+
+    Returns:
+        dict with 'exit_crash' and 'exit_trend' thresholds
+    """
+    market_strength = metrics['market_strength']
+    trend_strength = metrics['trend_strength']
+    crash_prob = metrics['crash_probability']
+
+    # Read base thresholds from .env
+    base_exit_crash = float(os.environ.get('BACKTEST_EXIT_CRASH', '0.40'))
+    base_exit_trend = float(os.environ.get('BACKTEST_EXIT_TREND', '0.30'))
+
+    # Detect market regime
+    if crash_prob >= 0.6:
+        market_regime = "CRASH"
+    elif market_strength > 0.6 and trend_strength > 0.5:
+        market_regime = "BULL"
+    elif market_strength < 0.3 and trend_strength < 0.3:
+        market_regime = "BEAR"
+    else:
+        market_regime = "VOLATILE"
+
+    # Adjust thresholds based on regime (multipliers)
+    if market_regime == "BULL":
+        # In bull: take profits EARLIER (lower thresholds)
+        exit_crash = base_exit_crash * 0.875  # 35% of 40% = 35%
+        exit_trend = base_exit_trend + 0.10   # 30% + 10% = 40%
+    elif market_regime == "BEAR":
+        # In bear: can hold LONGER (higher thresholds)
+        exit_crash = base_exit_crash + 0.05   # 40% + 5% = 45%
+        exit_trend = base_exit_trend * 0.67   # 30% * 0.67 = 20%
+    elif market_regime == "CRASH":
+        # In crash: be CONSERVATIVE (lower thresholds)
+        exit_crash = base_exit_crash * 0.75   # 40% * 0.75 = 30%
+        exit_trend = base_exit_trend * 0.33   # 30% * 0.33 = 10%
+    else:  # VOLATILE
+        # In volatile: use base values
+        exit_crash = base_exit_crash
+        exit_trend = base_exit_trend
+
+    return {
+        'exit_crash': exit_crash,
+        'exit_trend': exit_trend,
+        'regime': market_regime
+    }
+
+
 def should_send_alert(metrics: dict, min_probability: float, thresholds: dict = None) -> dict:
     """
     Validate signal quality using 4h timeframe, market regime, and funding rate filters.
@@ -558,12 +610,17 @@ def main():
         alerts_to_send = []
 
         for m in all_metrics:
+            # Get adaptive exit thresholds based on market regime
+            adaptive_thresholds = get_adaptive_exit_thresholds(m)
+
             if m['crash_probability'] >= min_probability:
                 # Apply intelligent filters: 4h timeframe, market regime, funding rate
                 validation = should_send_alert(m, min_probability, thresholds=thresholds)
 
                 if validation['should_alert']:
                     alerts_to_send.append(m)
+                    # Store adaptive thresholds for potential trading use
+                    m['adaptive_thresholds'] = adaptive_thresholds
 
         if alerts_to_send:
             print(f"\n✅ Found {len(alerts_to_send)} valid alert(s)")

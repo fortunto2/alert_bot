@@ -263,25 +263,22 @@ The monitor uses Gen11's crash detection with 3 levels:
 
 ### Understanding "Crash Probability"
 
-**Data source:** SPOT prices from Yahoo Finance (not futures)
+**Data source:** OKX Perpetual Futures with funding rate analysis
 
 **Crash probability = probability of PRICE DROP (падение цены)**
 
-#### For SPOT Trading (текущие данные):
-- 🔴 **≥60%** → SELL coins you have / DON'T BUY (продать имеющиеся / не покупать)
-- 🟠 **40-60%** → REDUCE positions / DON'T BUY (сократить / не покупать)
-- 🟡 **20-40%** → CAUTION with buying (осторожно покупать)
-- 🟢 **<20%** → NORMAL trading (нормальная торговля)
+Current system uses PERPETUAL FUTURES (not SPOT):
+- 🔴 **≥60%** → CRITICAL: OPEN SHORT / CLOSE LONG (открыть шорт / закрыть лонг)
+- 🟠 **40-60%** → HIGH RISK: CONSIDER SHORT / SET STOPS (рассмотреть шорт / поставить стопы)
+- 🟡 **20-40%** → MEDIUM RISK: DON'T OPEN LONG (не открывать лонг)
+- 🟢 **<20%** → LOW RISK: CAN OPEN LONG / NORMAL trading (можно открыть лонг)
 
-#### For FUTURES Trading (если используете фьючерсы):
-- 🔴 **≥60%** → OPEN SHORT / CLOSE LONG (открыть шорт / закрыть лонг)
-- 🟠 **40-60%** → CONSIDER SHORT / SET STOPS (рассмотреть шорт / поставить стопы)
-- 🟡 **20-40%** → DON'T OPEN LONG (не открывать лонг)
-- 🟢 **<20%** → CAN OPEN LONG (можно открыть лонг)
+**Example:** XRP at 42.5% (🟠 HIGH risk)
+- Action: Consider opening SHORT position at 50% of max size
+- Stop Loss: Set at -8% to -10%
+- Take Profit: Scale out at -1% to -3% moves
 
-**Example:** TRUMP at 53% (🟠 HIGH risk)
-- SPOT: Don't buy, sell if you have it
-- FUTURES: Consider opening SHORT position
+**Note:** Old Gen11 strategy used SPOT prices from Yahoo Finance, but current gen11-47 uses real perpetual futures data with funding rate sentiment, which is more accurate for crash detection.
 
 ## Configuration
 
@@ -312,53 +309,55 @@ CRASH_ALERT_THRESHOLD=0.2  # All alerts (≥20%)
 
 ## Example Alert Messages
 
-### Crisis Alert (Probability ≥ 60%)
+### High Risk Alert (Probability ≥ 40%)
 
 ```
-🚨 BTC CRASH ALERT 🚨
+🚨 CRYPTO CRASH ALERTS 🚨
 
-Уровень риска: КРИТИЧЕСКИЙ
-Вероятность краша: 67.50%
+🟠 *XRP* — ВЫСОКИЙ РИСК
+Цена: $2.49 🔴 -0.51%
+Краш: *42.5%* | RSI: 40.0 | 📉 МЕДВЕДЬ
+Fund: +0.0000 | Момент: 0.000
 
-📉 Цена BTC: $105,234.00
-Изменение 24h: -8.45%
-
-📊 Технические индикаторы:
-• RSI: 28.3
-• ATR Ratio: 2.45
-
-🕒 Время: 2025-10-26 14:00 UTC
-
-⚡ Рекомендации:
-• 🔴 КРИТИЧЕСКИЙ РИСК - рассмотрите выход из позиций
-• 🔴 Вероятность сильного падения очень высока
-
-Powered by ShinkaEvolve Gen11 Strategy
+_Обновлено: 2025-10-02 22:56 UTC_
+_Perpetual Futures (OKX) | gen11-47 Strategy_
 ```
 
-### Pre-Crash Warning (Probability ≥ 20%)
+**What this means:**
+- 🟠 ВЫСОКИЙ РИСК (40-60%): XRP crash probability is 42.5%
+- 📉 МЕДВЕДЬ: Market regime is bearish
+- 🔴 -0.51%: Price down 0.51% in last 24h
+- Fund: +0.0000: Funding rate is neutral
+
+**Action for Futures:**
+- Consider opening SHORT at 50% size
+- Set stop loss at -8% to -10%
+- Scale out on -1% to -3% moves
+
+### Medium Risk Alert (Probability ≥ 20%)
 
 ```
-⚡ BTC CRASH ALERT ⚡
+🚨 CRYPTO CRASH ALERTS 🚨
 
-Уровень риска: СРЕДНИЙ
-Вероятность краша: 24.30%
+🟨 *BTC* — СРЕДНИЙ РИСК
+Цена: $109,973.10 🟩 +0.40%
+Краш: *37.5%* | RSI: 55.0 | ➡️ КОНС
+Fund: -0.0002 | Момент: 0.15
 
-📈 Цена BTC: $118,500.00
-Изменение 24h: +1.23%
-
-📊 Технические индикаторы:
-• RSI: 72.1
-• ATR Ratio: 1.35
-
-🕒 Время: 2025-10-26 14:00 UTC
-
-⚡ Рекомендации:
-• 🟢 СРЕДНИЙ РИСК - наблюдайте за рынком
-• 🟢 Повышенная волатильность возможна
-
-Powered by ShinkaEvolve Gen11 Strategy
+_Обновлено: 2025-10-02 23:15 UTC_
+_Perpetual Futures (OKX) | gen11-47 Strategy_
 ```
+
+**What this means:**
+- 🟡 СРЕДНИЙ РИСК (20-40%): BTC crash probability is 37.5%
+- ➡️ КОНС: Market regime is consolidating
+- 🟩 +0.40%: Price up 0.40% in last 24h
+- Fund: -0.0002: Slight short pressure from funding
+
+**Action for Futures:**
+- Don't open new LONG positions
+- Monitor for regime change
+- Watch if funding rates turn negative
 
 ## Monitoring Logs
 

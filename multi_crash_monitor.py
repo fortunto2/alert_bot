@@ -266,42 +266,45 @@ def format_consolidated_alert(all_metrics: list, min_probability: float, thresho
         crypto_name = metrics['symbol'].split('/')[0]
         crash_prob = metrics['crash_probability']
 
-        # Determine alert level based on configurable thresholds
+        # Determine alert level emoji
         if crash_prob >= thresholds['crisis']:
-            alert_bar = "🔴 ███ КРИТИЧЕСКИЙ (SHORTИТЬ)"
+            alert_emoji = "🔴"
+            alert_text = "КРИТИЧЕСКИЙ"
         elif crash_prob >= thresholds['early_warning']:
-            alert_bar = "🟠 ██░ ВЫСОКИЙ РИСК"
+            alert_emoji = "🟠"
+            alert_text = "ВЫСОКИЙ РИСК"
         elif crash_prob >= thresholds['pre_crash']:
-            alert_bar = "🟡 █░░ СРЕДНИЙ РИСК"
+            alert_emoji = "🟡"
+            alert_text = "СРЕДНИЙ РИСК"
         else:
-            alert_bar = "🟢 ░░░ НИЗКИЙ РИСК"
+            alert_emoji = "🟢"
+            alert_text = "НИЗКИЙ РИСК"
 
         # Market regime
         if metrics['market_strength'] > 0.6:
             if metrics['trend_strength'] > 0.5:
-                market_regime = "📈 БЫЧ (Strong Bull)"
+                market_regime = "📈 БЫЧ"
             else:
-                market_regime = "➡️ КОНСОЛИДАЦИЯ"
+                market_regime = "➡️ КОНС"
         elif metrics['market_strength'] < 0.3:
             if metrics['trend_strength'] < 0.3:
-                market_regime = "📉 МЕДВЕДЬ (Weak)"
+                market_regime = "📉 МЕДВЕДЬ"
             else:
-                market_regime = "⚠️ КРАХ (Crash Mode)"
+                market_regime = "⚠️ КРАХ"
         else:
-            market_regime = "⚡ НЕСТАБИЛЬНО (Volatile)"
+            market_regime = "⚡ ВОЛАТ"
 
-        # Price change indicator with strikethrough style
+        # Price change color
         if metrics['change_24h'] > 0:
-            price_change = f"📈 {metrics['change_24h']:+.2f}%"
+            price_color = f"🔵 {metrics['change_24h']:+.2f}%"
         else:
-            price_change = f"📉 {metrics['change_24h']:+.2f}%"
+            price_color = f"🔴 {metrics['change_24h']:+.2f}%"
 
-        # Add crypto alert with compact metrics
-        message += f"{alert_bar}\n"
-        message += f"*{crypto_name}* | {format_price(metrics['price'])} | {price_change}\n"
-        message += f"Риск краша: *{crash_prob:.1%}* | RSI: {metrics['rsi']:.0f}\n"
-        message += f"Режим: {market_regime}\n"
-        message += f"Funding: {metrics['funding_stress']:+.3f} | Моментум: {metrics['momentum_strength']:.2f}\n\n"
+        # Add crypto alert - clean and simple
+        message += f"{alert_emoji} *{crypto_name}* — {alert_text}\n"
+        message += f"Цена: {format_price(metrics['price'])} {price_color}\n"
+        message += f"Краш: *{crash_prob:.1%}* | RSI {metrics['rsi']:.0f} | {market_regime}\n"
+        message += f"Fund: {metrics['funding_stress']:+.3f} | Mom: {metrics['momentum_strength']:.2f}\n\n"
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]
@@ -404,33 +407,26 @@ def main():
             prob = metrics['crash_probability']
             change = metrics['change_24h']
 
-            # Alert status with colored bars instead of emoji
+            # Alert level emoji only
             if prob >= thresholds['crisis']:
-                alert_status = "███ CRITICAL"  # Red bar
-                alert_level = "🔴"
+                alert_emoji = "🔴"  # Red - Critical
             elif prob >= thresholds['early_warning']:
-                alert_status = "██░ HIGH"      # Orange bar
-                alert_level = "🟠"
+                alert_emoji = "🟠"  # Orange - High
             elif prob >= thresholds['pre_crash']:
-                alert_status = "█░░ MEDIUM"    # Yellow bar
-                alert_level = "🟡"
+                alert_emoji = "🟡"  # Yellow - Medium
             else:
-                alert_status = "░░░ LOW"       # Gray bar
-                alert_level = "🟢"
+                alert_emoji = "🟢"  # Green - Low
 
-            # Price change indicator: blue up, red down
+            # Price change: RED down, BLUE up, simple
             if change > 0:
-                price_indicator = "📈 ↑"  # Blue/up
-            elif change < 0:
-                price_indicator = "📉 ↓"  # Red/down
+                price_emoji = "🔵"  # Blue up
             else:
-                price_indicator = "➡️  ="
+                price_emoji = "🔴"  # Red down
 
             # Format price with appropriate precision
-            price_str = format_price(metrics['price']).replace('$', '')  # Remove $ for alignment
+            price_str = format_price(metrics['price']).replace('$', '')
 
-            print(f"{alert_level} {alert_status:15} {crypto_name:8} {prob:6.1%}  "
-                  f"${price_str:>12} {price_indicator} {change:+6.2f}%")
+            print(f"{alert_emoji} {crypto_name:8} {prob:6.1%}  ${price_str:>12}  {price_emoji} {change:+6.2f}%")
 
         # Check if any alerts need to be sent
         alerts_to_send = [m for m in all_metrics if m['crash_probability'] >= min_probability]

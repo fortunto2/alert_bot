@@ -308,22 +308,23 @@ def format_consolidated_alert(all_metrics: list, min_probability: float, thresho
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]
+    highest_crypto = highest_alert['symbol'].split('/')[0]
     crash_prob = highest_alert['crash_probability']
-    message += "⚡ *СТРАТЕГИЯ ДЕЙСТВИЯ:*\n\n"
+    message += f"⚡ *ДЕЙСТВИЕ ДЛЯ {highest_crypto}:*\n\n"
 
     if crash_prob >= thresholds['crisis']:
-        message += "🔴 *КРИТИЧЕСКИЙ КРАШ (≥{:.0%})*\n".format(thresholds['crisis'])
+        message += f"🔴 *КРИТИЧЕСКИЙ КРАШ (≥{thresholds['crisis']:.0%})*\n"
         message += "• ФЬЮЧЕРСЫ: 🟥 SHORT все позиции\n"
         message += "• Размер: Максимальный (полный левередж)\n"
         message += "• Стоп-лосс: Ширина волатильности × 1.5\n"
         message += "• Прибыль: ТП на -5% до -15%\n"
     elif crash_prob >= thresholds['early_warning']:
-        message += "🟠 *ВЫСОКИЙ РИСК ({:.0%}-{:.0%})*\n".format(thresholds['early_warning'], thresholds['crisis'])
+        message += f"🟠 *ВЫСОКИЙ РИСК ({thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%})*\n"
         message += "• ФЬЮЧЕРСЫ: 🟥 SHORT позиция 50% от максимума\n"
         message += "• СПОТ: Сократить LONG / Не покупать\n"
         message += "• Стоп-лосс: -8-10%\n"
     elif crash_prob >= thresholds['pre_crash']:
-        message += "🟡 *СРЕДНИЙ РИСК ({:.0%}-{:.0%})*\n".format(thresholds['pre_crash'], thresholds['early_warning'])
+        message += f"🟡 *СРЕДНИЙ РИСК ({thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%})*\n"
         message += "• ФЬЮЧЕРСЫ: Готовиться к SHORT\n"
         message += "• СПОТ: Осторожно - не открывать новые LONG\n"
         message += "• Наблюдать за funding rate\n"

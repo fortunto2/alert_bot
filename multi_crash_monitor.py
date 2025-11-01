@@ -42,17 +42,14 @@ spec.loader.exec_module(strategy_module)
 
 # Top cryptocurrencies to monitor - OKX perpetual futures format
 # Format: "BTC/USDT:USDT" for perpetual contracts
+# TOP 5 by market cap + TRUMP
 TOP_CRYPTOS = [
     "BTC/USDT:USDT",    # Bitcoin
     "ETH/USDT:USDT",    # Ethereum
     "SOL/USDT:USDT",    # Solana
     "XRP/USDT:USDT",    # Ripple
-    "ADA/USDT:USDT",    # Cardano
-    "DOGE/USDT:USDT",   # Dogecoin
     "AVAX/USDT:USDT",   # Avalanche
-    "DOT/USDT:USDT",    # Polkadot
-    "LINK/USDT:USDT",   # Chainlink
-    "LTC/USDT:USDT",    # Litecoin
+    "TRUMP/USDT:USDT",  # Trump
 ]
 
 # Exchange to use for futures data
@@ -194,6 +191,7 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, t
         volatility = float(system.norm_atr.iloc[latest_idx])
         trend_strength = float(system.trend_strength.iloc[latest_idx])
         momentum_strength = float(system.momentum_strength.iloc[latest_idx])
+        market_strength = float(system.market_strength.iloc[latest_idx])
         funding_stress = float(system.funding_stress.iloc[latest_idx])
         vol_ratio_4h = float(system.vol_ratio_4h.iloc[latest_idx])
 
@@ -218,6 +216,7 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, t
             'volatility': volatility,
             'trend_strength': trend_strength,
             'momentum_strength': momentum_strength,
+            'market_strength': market_strength,
             'funding_stress': funding_stress,
             'vol_ratio_4h': vol_ratio_4h,
         }
@@ -263,64 +262,72 @@ def format_consolidated_alert(all_metrics: list, min_probability: float, thresho
     message = "🚨 *CRYPTO CRASH ALERTS* 🚨\n\n"
 
     for metrics in alerts:
-        # Get crypto name (remove -USD suffix)
-        crypto_name = metrics['symbol'].replace('-USD', '')
+        # Get crypto name from futures symbol
+        crypto_name = metrics['symbol'].split('/')[0]
+        crash_prob = metrics['crash_probability']
 
         # Determine alert level based on configurable thresholds
-        if metrics['crash_probability'] >= thresholds['crisis']:
-            alert_emoji = "🔴"
-            alert_level = "КРИТИЧЕСКИЙ"
-        elif metrics['crash_probability'] >= thresholds['early_warning']:
-            alert_emoji = "🟠"
-            alert_level = "ВЫСОКИЙ"
-        elif metrics['crash_probability'] >= thresholds['pre_crash']:
-            alert_emoji = "🟡"
-            alert_level = "СРЕДНИЙ"
+        if crash_prob >= thresholds['crisis']:
+            alert_bar = "🔴 ███ КРИТИЧЕСКИЙ (SHORTИТЬ)"
+        elif crash_prob >= thresholds['early_warning']:
+            alert_bar = "🟠 ██░ ВЫСОКИЙ РИСК"
+        elif crash_prob >= thresholds['pre_crash']:
+            alert_bar = "🟡 █░░ СРЕДНИЙ РИСК"
         else:
-            alert_emoji = "🟢"
-            alert_level = "НИЗКИЙ"
+            alert_bar = "🟢 ░░░ НИЗКИЙ РИСК"
 
-        # Price change emoji
-        change_emoji = "📈" if metrics['change_24h'] > 0 else "📉"
-
-        # Trend indicator
-        trend_emoji = "📈" if metrics['trend_strength'] > 0.5 else "📉" if metrics['trend_strength'] < 0.3 else "➡️"
-
-        # Volatility indicator
-        if metrics['volatility'] > 0.03:
-            vol_emoji = "⚡"
-        elif metrics['volatility'] > 0.02:
-            vol_emoji = "🔥"
+        # Market regime
+        if metrics['market_strength'] > 0.6:
+            if metrics['trend_strength'] > 0.5:
+                market_regime = "📈 БЫЧ (Strong Bull)"
+            else:
+                market_regime = "➡️ КОНСОЛИДАЦИЯ"
+        elif metrics['market_strength'] < 0.3:
+            if metrics['trend_strength'] < 0.3:
+                market_regime = "📉 МЕДВЕДЬ (Weak)"
+            else:
+                market_regime = "⚠️ КРАХ (Crash Mode)"
         else:
-            vol_emoji = "❄️"
+            market_regime = "⚡ НЕСТАБИЛЬНО (Volatile)"
+
+        # Price change indicator with strikethrough style
+        if metrics['change_24h'] > 0:
+            price_change = f"📈 {metrics['change_24h']:+.2f}%"
+        else:
+            price_change = f"📉 {metrics['change_24h']:+.2f}%"
 
         # Add crypto alert with compact metrics
-        message += f"{alert_emoji} *{crypto_name}* - {alert_level}\n"
-        message += f"Риск: *{metrics['crash_probability']:.1%}* | RSI: {metrics['rsi']:.0f}\n"
-        message += f"{change_emoji} {format_price(metrics['price'])} ({metrics['change_24h']:+.1f}%) | "
-        message += f"{trend_emoji} {metrics['trend_strength']:.2f} | {vol_emoji} {metrics['volatility']:.3f}\n"
-        message += f"Моментум: {metrics['momentum_strength']:.2f} | Vol4h: {metrics['vol_ratio_4h']:.2f}\n\n"
+        message += f"{alert_bar}\n"
+        message += f"*{crypto_name}* | {format_price(metrics['price'])} | {price_change}\n"
+        message += f"Риск краша: *{crash_prob:.1%}* | RSI: {metrics['rsi']:.0f}\n"
+        message += f"Режим: {market_regime}\n"
+        message += f"Funding: {metrics['funding_stress']:+.3f} | Моментум: {metrics['momentum_strength']:.2f}\n\n"
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]
     crash_prob = highest_alert['crash_probability']
-    message += "⚡ *Рекомендации:*\n"
+    message += "⚡ *СТРАТЕГИЯ ДЕЙСТВИЯ:*\n\n"
 
     if crash_prob >= thresholds['crisis']:
-        message += f"• 🔴 *КРИТИЧЕСКИЙ РИСК ПАДЕНИЯ* (≥{thresholds['crisis']:.0%})\n"
-        message += "• 🔴 СПОТ: Продать имеющиеся монеты / НЕ ПОКУПАТЬ\n"
-        message += "• 🔴 ФЬЮЧЕРСЫ: Открыть SHORT / Закрыть LONG\n"
+        message += "🔴 *КРИТИЧЕСКИЙ КРАШ (≥{:.0%})*\n".format(thresholds['crisis'])
+        message += "• ФЬЮЧЕРСЫ: 🟥 SHORT все позиции\n"
+        message += "• Размер: Максимальный (полный левередж)\n"
+        message += "• Стоп-лосс: Ширина волатильности × 1.5\n"
+        message += "• Прибыль: ТП на -5% до -15%\n"
     elif crash_prob >= thresholds['early_warning']:
-        message += f"• 🟠 *ВЫСОКИЙ РИСК ПАДЕНИЯ* ({thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%})\n"
-        message += "• 🟠 СПОТ: Сократить позиции / НЕ ПОКУПАТЬ\n"
-        message += "• 🟠 ФЬЮЧЕРСЫ: Рассмотреть SHORT / Установить стопы\n"
+        message += "🟠 *ВЫСОКИЙ РИСК ({:.0%}-{:.0%})*\n".format(thresholds['early_warning'], thresholds['crisis'])
+        message += "• ФЬЮЧЕРСЫ: 🟥 SHORT позиция 50% от максимума\n"
+        message += "• СПОТ: Сократить LONG / Не покупать\n"
+        message += "• Стоп-лосс: -8-10%\n"
     elif crash_prob >= thresholds['pre_crash']:
-        message += f"• 🟡 *СРЕДНИЙ РИСК* ({thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%})\n"
-        message += "• 🟡 СПОТ: Осторожно с покупками\n"
-        message += "• 🟡 ФЬЮЧЕРСЫ: Не открывать LONG без стопов\n"
+        message += "🟡 *СРЕДНИЙ РИСК ({:.0%}-{:.0%})*\n".format(thresholds['pre_crash'], thresholds['early_warning'])
+        message += "• ФЬЮЧЕРСЫ: Готовиться к SHORT\n"
+        message += "• СПОТ: Осторожно - не открывать новые LONG\n"
+        message += "• Наблюдать за funding rate\n"
 
-    message += f"\n_Время: {highest_alert['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}_"
-    message += f"\n_Powered by Gen11 Strategy_"
+    message += f"\n_Обновлено: {highest_alert['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}_\n"
+    message += "_Futures Trading System (OKX Perpetual Futures)_\n"
+    message += "_Powered by Gen11-47 Strategy_"
 
     return message
 
@@ -395,16 +402,35 @@ def main():
             # Extract crypto name from futures symbol (e.g., "BTC/USDT:USDT" -> "BTC")
             crypto_name = metrics['symbol'].split('/')[0]
             prob = metrics['crash_probability']
-            alert_status = "🔴 CRISIS" if prob >= thresholds['crisis'] else \
-                          "🟠 HIGH" if prob >= thresholds['early_warning'] else \
-                          "🟡 MEDIUM" if prob >= thresholds['pre_crash'] else \
-                          "🟢 LOW"
+            change = metrics['change_24h']
+
+            # Alert status with colored bars instead of emoji
+            if prob >= thresholds['crisis']:
+                alert_status = "███ CRITICAL"  # Red bar
+                alert_level = "🔴"
+            elif prob >= thresholds['early_warning']:
+                alert_status = "██░ HIGH"      # Orange bar
+                alert_level = "🟠"
+            elif prob >= thresholds['pre_crash']:
+                alert_status = "█░░ MEDIUM"    # Yellow bar
+                alert_level = "🟡"
+            else:
+                alert_status = "░░░ LOW"       # Gray bar
+                alert_level = "🟢"
+
+            # Price change indicator: blue up, red down
+            if change > 0:
+                price_indicator = "📈 ↑"  # Blue/up
+            elif change < 0:
+                price_indicator = "📉 ↓"  # Red/down
+            else:
+                price_indicator = "➡️  ="
 
             # Format price with appropriate precision
             price_str = format_price(metrics['price']).replace('$', '')  # Remove $ for alignment
 
-            print(f"{alert_status:15} {crypto_name:8} {metrics['crash_probability']:6.2%}  "
-                  f"${price_str:>12} ({metrics['change_24h']:+6.2f}%)")
+            print(f"{alert_level} {alert_status:15} {crypto_name:8} {prob:6.1%}  "
+                  f"${price_str:>12} {price_indicator} {change:+6.2f}%")
 
         # Check if any alerts need to be sent
         alerts_to_send = [m for m in all_metrics if m['crash_probability'] >= min_probability]

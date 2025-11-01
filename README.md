@@ -226,6 +226,70 @@ chmod +x setup_cron.sh
 
 **Key Insight:** Bull market trading relies on price bands (Bollinger) + EMA crossovers. Funding momentum becomes relevant only in extreme conditions.
 
+### How the Algorithm Actually Works (vs README)
+
+**Important:** The TOP 10 features above were discovered by ShinkaEvolve training, but the actual code uses **8 combined factors** that leverage these indicators intelligently. Here's the real implementation:
+
+#### **The 8 Real Factors in `initial.py`** (Lines 370-384)
+
+| Factor | Weight | What It Contains | Why It Works |
+|--------|--------|------------------|-------------|
+| **Volatility Cascade** | 0.25 | ATR (1h) spike + Vol Ratio (4h/24h) expansion | Crashes = volatility panic. Multi-timeframe catches magnitude |
+| **Negative Momentum** | 0.20 | Price acceleration in bottom 10% + Acceleration slope | Not just falling, but **accelerating downward** (jerk effect) |
+| **Volume Divergence** | 0.15 | Price up 5 candles but volume < 80% of MA | Classic weakness: price rises without conviction |
+| **Trend Exhaustion** | 0.20 | Price >5% from EMA50 + momentum slowing | When price extremes meet momentum collapse = reversal |
+| **Funding Stress** | 0.20 | Extreme positive funding OR negative pivot OR jerk spike | Futures-specific: trader positioning stress indicates reversal |
+| **Funding Acceleration** | 0.10 | Funding rate change in top 5% extreme events | Early warning: funding moving to extremes |
+| **Funding Velocity** | 0.10 | Funding trend acceleration (first derivative smoothed) | Direction of funding pressure (trend indicator) |
+| **Cross-Timeframe Funding** | 0.10 | 4h funding stress vs 24h baseline | Multi-timeframe confirmation for funding divergence |
+
+**Total:** Sum of factors = max 1.25 → clipped to 1.0 → smoothed with 4-period rolling mean → final `crash_probability`
+
+#### **Why This Design Works Better Than Simple Indicators**
+
+**Example: BTC at 42.5% crash probability**
+
+```
+Raw components:
+- Vol Cascade: YES (ATR in top 20%, vol ratio 1.15x) → +0.25
+- Neg Momentum: YES (accel < -10% quantile) → +0.20
+- Vol Divergence: NO (volume ratio still 0.95) → +0.00
+- Trend Exhaustion: NO (price only 2% from EMA50) → +0.00
+- Funding Stress: YES (extreme positive 0.00018) → +0.20
+- Others: Maybe some activation → +0.10-0.15
+─────────────────────────
+Raw probability = 0.70-0.75 → clipped to 1.0 → smoothed to 0.425
+```
+
+**This is smarter than:**
+- ❌ "If RSI > 70" (too many false signals in trends)
+- ❌ "If OBV divergence" (needs confirmation)
+- ❌ Simple threshold (price > MA50) (too slow)
+
+**Because it:**
+✅ Requires **multiple confirming signals** (volatility + momentum + funding)
+✅ Uses **different timeframes** (1h + 4h + 24h)
+✅ Applies **dynamic weighting** (volatility gets 0.25, not 0.10)
+✅ **Smooths** to avoid noise (4-period rolling mean)
+
+#### **Why Different Periods Have Different Feature Importance**
+
+**CRASH Period (80% training weight):**
+- OBV + EMA = 0.305-0.303 (strongest signals)
+- Bollinger Bands = 0.239-0.272 (price extremes)
+- Volume thresholds = 0.178-0.183 (volatility)
+
+→ **Strategy prioritizes:** Volume indicators + Trend breakdown + Volatility
+
+**BULL Period (20% training weight):**
+- Bollinger Bands = 0.133 (support/resistance)
+- EMA crossovers = 0.124 (trend confirmation)
+- Same features but 2-3x weaker signals
+
+→ **Strategy defensive:** Less reactive, avoids false signals in boring markets
+
+**Result:** Model trained on 80% crash data, 20% bull data = optimized for crises, safe in normal times
+
 ### Training Results Summary
 
 **Strategy Evolution: Gen-72 → gen11-47**

@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "ccxt>=4.5.14",
     "fastparquet>=2024.11.0",
+    "openbb>=4.1.3",
     "pandas>=2.3.3",
     "pyarrow>=22.0.0",
     "python-dotenv>=1.2.1",

@@ -202,7 +202,7 @@ def main():
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
 
     # Alert thresholds
-    min_probability = float(os.environ.get('CRASH_ALERT_THRESHOLD', '0.2'))  # Default: pre_crash_warning (0.2)
+    min_probability = float(os.environ.get('CRASH_ALERT_THRESHOLD', '0.4'))  # Default: pre_crash_warning (0.2)
 
     if not bot_token or not chat_id:
         print("ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set")

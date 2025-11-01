@@ -147,13 +147,25 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500):
         current_time = df['datetime'].iloc[latest_idx]
 
         crash_prob = float(system.crash_probability.iloc[latest_idx])
-        pre_crash_warning = bool(system.pre_crash_warning.iloc[latest_idx])
-        early_warning = bool(system.early_warning.iloc[latest_idx])
-        crisis_alert = bool(system.crisis_alert.iloc[latest_idx])
+
+        # Map new alert levels to old names for compatibility
+        # New: early_crash_warning (0.3-0.5), mid_crash_phase (0.5-0.7), late_crash_phase (>0.7)
+        # Old: pre_crash_warning (>=0.2), early_warning (>=0.4), crisis_alert (>=0.6)
+        pre_crash_warning = bool(crash_prob >= 0.2)
+        early_warning = bool(crash_prob >= 0.4)
+        crisis_alert = bool(crash_prob >= 0.6)
 
         # Additional metrics
         rsi = float(system.rsi.iloc[latest_idx])
-        atr_ratio = float(system.atr_short.iloc[latest_idx] / system.atr_long.iloc[latest_idx])
+        # Use normalized ATR ratio (4h / 24h comparison)
+        atr_ratio = float(system.atr_4h.iloc[latest_idx] / system.atr_24h.iloc[latest_idx])
+
+        # New metrics from enhanced strategy
+        volatility = float(system.norm_atr.iloc[latest_idx])
+        trend_strength = float(system.trend_strength.iloc[latest_idx])
+        momentum_strength = float(system.momentum_strength.iloc[latest_idx])
+        funding_stress = float(system.funding_stress.iloc[latest_idx])
+        vol_ratio_4h = float(system.vol_ratio_4h.iloc[latest_idx])
 
         # Calculate 24h change
         if len(df) >= 24:
@@ -173,6 +185,11 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500):
             'crisis_alert': crisis_alert,
             'rsi': rsi,
             'atr_ratio': atr_ratio,
+            'volatility': volatility,
+            'trend_strength': trend_strength,
+            'momentum_strength': momentum_strength,
+            'funding_stress': funding_stress,
+            'vol_ratio_4h': vol_ratio_4h,
         }
 
     except Exception as e:
@@ -228,11 +245,23 @@ def format_consolidated_alert(all_metrics: list, min_probability: float) -> str:
         # Price change emoji
         change_emoji = "📈" if metrics['change_24h'] > 0 else "📉"
 
-        # Add crypto alert with smart price formatting
+        # Trend indicator
+        trend_emoji = "📈" if metrics['trend_strength'] > 0.5 else "📉" if metrics['trend_strength'] < 0.3 else "➡️"
+
+        # Volatility indicator
+        if metrics['volatility'] > 0.03:
+            vol_emoji = "⚡"
+        elif metrics['volatility'] > 0.02:
+            vol_emoji = "🔥"
+        else:
+            vol_emoji = "❄️"
+
+        # Add crypto alert with compact metrics
         message += f"{alert_emoji} *{crypto_name}* - {alert_level}\n"
-        message += f"Вероятность: *{metrics['crash_probability']:.1%}*\n"
-        message += f"{change_emoji} {format_price(metrics['price'])} ({metrics['change_24h']:+.1f}% 24h)\n"
-        message += f"RSI: {metrics['rsi']:.1f} | ATR: {metrics['atr_ratio']:.2f}\n\n"
+        message += f"Риск: *{metrics['crash_probability']:.1%}* | RSI: {metrics['rsi']:.0f}\n"
+        message += f"{change_emoji} {format_price(metrics['price'])} ({metrics['change_24h']:+.1f}%) | "
+        message += f"{trend_emoji} {metrics['trend_strength']:.2f} | {vol_emoji} {metrics['volatility']:.3f}\n"
+        message += f"Моментум: {metrics['momentum_strength']:.2f} | Vol4h: {metrics['vol_ratio_4h']:.2f}\n\n"
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]

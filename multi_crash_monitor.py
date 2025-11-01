@@ -556,7 +556,6 @@ def main():
         # Check if any alerts need to be sent
         # NEW: Use intelligent filtering to reduce false positives and spam
         alerts_to_send = []
-        blocked_reasons = []
 
         for m in all_metrics:
             if m['crash_probability'] >= min_probability:
@@ -565,39 +564,21 @@ def main():
 
                 if validation['should_alert']:
                     alerts_to_send.append(m)
-                    crypto_name = m['symbol'].split('/')[0]
-                    confidence = validation['confidence']
-                    print(f"\n  ✅ {crypto_name}: VALID ALERT (Confidence: {confidence:.0%})")
-                    print(f"     {validation['reason']}")
-                else:
-                    crypto_name = m['symbol'].split('/')[0]
-                    confidence = validation['confidence']
-                    blocked_reasons.append(f"  ❌ {crypto_name}: FILTERED (Confidence: {confidence:.0%})")
-                    print(f"\n  ❌ {crypto_name}: FILTERED")
-                    print(f"     {validation['reason']}")
-
-        # Print filtered alerts summary
-        if blocked_reasons:
-            print("\n" + "="*60)
-            print("FILTERED ALERTS (False positive prevention):")
-            print("="*60)
-            for reason in blocked_reasons:
-                print(reason)
 
         if alerts_to_send:
-            print(f"\n⚠️ ALERT: {len(alerts_to_send)}/{len(all_metrics)} cryptocurrencies passed validation!")
+            print(f"\n✅ Found {len(alerts_to_send)} valid alert(s)")
             print("📤 Sending Telegram notification...")
 
             message = format_consolidated_alert(alerts_to_send, 0.0, thresholds=thresholds)  # Already filtered
 
             if message and send_telegram_message(bot_token, chat_id, message):
-                print("✅ Alert sent successfully!")
+                print("✅ Alert sent!")
                 return 0
             else:
                 print("❌ Failed to send alert")
                 return 1
         else:
-            print(f"\n✅ No valid alerts (passed through {len(all_metrics)} cryptos with smart filters)")
+            print(f"\n✅ No alerts (all cryptos filtered)")
 
             # Optional: send daily summary
             send_daily = os.environ.get('SEND_DAILY_SUMMARY', 'false').lower() == 'true'

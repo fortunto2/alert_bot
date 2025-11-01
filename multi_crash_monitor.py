@@ -300,11 +300,11 @@ def format_consolidated_alert(all_metrics: list, min_probability: float, thresho
         else:
             price_color = f"🔴 {metrics['change_24h']:+.2f}%"
 
-        # Add crypto alert - clean and simple
+        # Add crypto alert - clean and simple with clear rounding
         message += f"{alert_emoji} *{crypto_name}* — {alert_text}\n"
         message += f"Цена: {format_price(metrics['price'])} {price_color}\n"
-        message += f"Краш: *{crash_prob:.1%}* | RSI {metrics['rsi']:.0f} | {market_regime}\n"
-        message += f"Fund: {metrics['funding_stress']:+.3f} | Mom: {metrics['momentum_strength']:.2f}\n\n"
+        message += f"Краш: *{crash_prob*100:.1f}%* | RSI: {metrics['rsi']:.1f} | {market_regime}\n"
+        message += f"Fund: {metrics['funding_stress']:+.4f} | Момент: {metrics['momentum_strength']:.3f}\n\n"
 
     # Add recommendations based on highest alert level
     highest_alert = alerts[0]
@@ -329,8 +329,7 @@ def format_consolidated_alert(all_metrics: list, min_probability: float, thresho
         message += "• Наблюдать за funding rate\n"
 
     message += f"\n_Обновлено: {highest_alert['timestamp'].strftime('%Y-%m-%d %H:%M UTC')}_\n"
-    message += "_Futures Trading System (OKX Perpetual Futures)_\n"
-    message += "_Powered by Gen11-47 Strategy_"
+    message += "_Perpetual Futures (OKX) | gen11-47 Strategy_"
 
     return message
 
@@ -407,21 +406,21 @@ def main():
             prob = metrics['crash_probability']
             change = metrics['change_24h']
 
-            # Alert level emoji only
+            # Alert level - RED/YELLOW/GREEN triangles
             if prob >= thresholds['crisis']:
-                alert_emoji = "🔴"  # Red - Critical
+                alert_emoji = "🔻"  # Red triangle down - Critical
             elif prob >= thresholds['early_warning']:
-                alert_emoji = "🟠"  # Orange - High
+                alert_emoji = "🟧"  # Orange square - High
             elif prob >= thresholds['pre_crash']:
-                alert_emoji = "🟡"  # Yellow - Medium
+                alert_emoji = "🟨"  # Yellow square - Medium
             else:
-                alert_emoji = "🟢"  # Green - Low
+                alert_emoji = "🟩"  # Green square - Low
 
-            # Price change: RED down, BLUE up, simple
+            # Price change: GREEN up, RED down - triangles
             if change > 0:
-                price_emoji = "🔵"  # Blue up
+                price_emoji = "🟩"  # Green up
             else:
-                price_emoji = "🔴"  # Red down
+                price_emoji = "🔻"  # Red down
 
             # Format price with appropriate precision
             price_str = format_price(metrics['price']).replace('$', '')

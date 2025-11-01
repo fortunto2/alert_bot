@@ -226,6 +226,151 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, t
         return None
 
 
+def should_send_alert(metrics: dict, min_probability: float, thresholds: dict = None) -> dict:
+    """
+    Validate signal quality using 4h timeframe, market regime, and funding rate filters.
+
+    Returns dict with:
+    - 'should_alert': bool - whether to send alert
+    - 'reason': str - why alert was sent/blocked
+    - 'confidence': float - confidence score (0-1)
+    """
+
+    if thresholds is None:
+        thresholds = {
+            'pre_crash': 0.2,
+            'early_warning': 0.4,
+            'crisis': 0.6
+        }
+
+    crash_prob = metrics['crash_probability']
+
+    # Check if below minimum threshold
+    if crash_prob < min_probability:
+        return {
+            'should_alert': False,
+            'reason': f'Probability {crash_prob:.1%} below threshold {min_probability:.1%}',
+            'confidence': 0.0
+        }
+
+    # Initialize confidence
+    confidence = crash_prob
+    reasons = []
+
+    # FILTER 1: Market Regime (idea #4)
+    # In BULL market: require higher probability
+    # In BEAR market: lower threshold to catch shorts earlier
+    # In CRASH mode: always alert
+
+    market_strength = metrics['market_strength']
+    trend_strength = metrics['trend_strength']
+
+    # Detect market regime
+    if crash_prob >= thresholds['crisis']:
+        market_regime = "CRASH"
+    elif market_strength > 0.6:
+        if trend_strength > 0.5:
+            market_regime = "BULL"
+            # In bull market, require VERY high probability to open shorts
+            if crash_prob < 0.50:
+                return {
+                    'should_alert': False,
+                    'reason': f'BULL regime: need {0.50:.1%}+ (got {crash_prob:.1%})',
+                    'confidence': crash_prob * 0.5  # Low confidence in bull
+                }
+            confidence *= 0.8  # Reduce confidence in bull market
+            reasons.append("⚠️ BULL market (lower confidence)")
+        else:
+            market_regime = "CONSOLIDATION"
+            reasons.append("➡️ Consolidating (neutral)")
+    elif market_strength < 0.3:
+        market_regime = "BEAR"
+        if trend_strength < 0.3:
+            market_regime = "BEAR"
+            # In bear market, can open shorts at lower threshold
+            confidence *= 1.3  # Boost confidence in bear
+            reasons.append("📉 BEAR market (higher confidence)")
+        else:
+            market_regime = "CRASH"
+            confidence *= 1.5  # Very high confidence in crash
+            reasons.append("🚨 CRASH mode (maximum confidence)")
+    else:
+        market_regime = "VOLATILE"
+        confidence *= 0.9
+        reasons.append("⚡ High volatility (caution)")
+
+    # FILTER 2: 4h Timeframe Alignment (idea #3)
+    # Check if 1h signal is aligned with 4h trend
+
+    vol_ratio_4h = metrics['vol_ratio_4h']  # 4h/24h volatility ratio
+
+    # If 4h volatility is VERY LOW, signal is weak (consolidation)
+    if vol_ratio_4h < 0.5:
+        if crash_prob < 0.45:  # Require much higher in low vol
+            return {
+                'should_alert': False,
+                'reason': f'Low 4h volatility ({vol_ratio_4h:.2f}) - consolidation',
+                'confidence': crash_prob * 0.3
+            }
+        confidence *= 0.7  # Reduce confidence in low vol
+        reasons.append(f"Low 4h vol {vol_ratio_4h:.2f} (weak signal)")
+    else:
+        # High 4h volatility = strong signal
+        confidence *= 1.2
+        reasons.append(f"High 4h vol {vol_ratio_4h:.2f} (strong signal)")
+
+    # FILTER 3: Funding Rate (idea #5)
+    # Check if market sentiment supports the trade
+
+    funding_stress = metrics['funding_stress']
+
+    # If funding_stress is extremely positive (>0.08), longs are too crowded
+    # Shorts are expensive, but crash is likely
+    if funding_stress > 0.08:
+        confidence *= 1.4  # VERY high confidence
+        reasons.append(f"Extreme bull funding {funding_stress:.4f} (shorts winning)")
+    # If funding_stress is negative (<-0.05), shorts are winning but may reverse soon
+    elif funding_stress < -0.05:
+        confidence *= 1.1  # Good for shorts
+        reasons.append(f"Negative funding {funding_stress:.4f} (shorts strong)")
+    # If funding_stress is near zero, neutral
+    elif abs(funding_stress) < 0.01:
+        confidence *= 0.8  # Lower confidence in neutral
+        reasons.append(f"Neutral funding {funding_stress:.4f} (uncertain)")
+
+    # FILTER 4: RSI Extremes (confirm oversold)
+    rsi = metrics['rsi']
+
+    if rsi < 30:
+        confidence *= 1.2  # Oversold = strong crash signal
+        reasons.append(f"RSI {rsi:.1f} (oversold)")
+    elif rsi > 70:
+        confidence *= 0.5  # Overbought = may bounce (false signal)
+        reasons.append(f"RSI {rsi:.1f} (overbought - risky)")
+
+    # FILTER 5: Momentum
+    momentum = metrics['momentum_strength']
+
+    if momentum < 0:
+        confidence *= 1.1  # Negative momentum = crash likely
+        reasons.append(f"Negative momentum {momentum:.2f}")
+
+    # Cap confidence at 1.0
+    confidence = min(confidence, 1.0)
+
+    # FINAL DECISION: Send alert if confidence > 0.4 AND probability above threshold
+    final_should_alert = confidence >= 0.4 and crash_prob >= min_probability
+
+    reason_str = f"{market_regime} | Confidence: {confidence:.1%} | " + " | ".join(reasons)
+
+    return {
+        'should_alert': final_should_alert,
+        'reason': reason_str,
+        'confidence': confidence,
+        'market_regime': market_regime
+    }
+
+
 def format_price(price: float) -> str:
     """Format price with appropriate precision based on value."""
     if price >= 1.0:
@@ -409,13 +554,41 @@ def main():
             print(f"{alert_emoji} {crypto_name:8} {prob:6.1%}  ${price_str:>12}  {price_emoji} {change:+6.2f}%")
 
         # Check if any alerts need to be sent
-        alerts_to_send = [m for m in all_metrics if m['crash_probability'] >= min_probability]
+        # NEW: Use intelligent filtering to reduce false positives and spam
+        alerts_to_send = []
+        blocked_reasons = []
+
+        for m in all_metrics:
+            if m['crash_probability'] >= min_probability:
+                # Apply intelligent filters: 4h timeframe, market regime, funding rate
+                validation = should_send_alert(m, min_probability, thresholds=thresholds)
+
+                if validation['should_alert']:
+                    alerts_to_send.append(m)
+                    crypto_name = m['symbol'].split('/')[0]
+                    confidence = validation['confidence']
+                    print(f"\n  ✅ {crypto_name}: VALID ALERT (Confidence: {confidence:.0%})")
+                    print(f"     {validation['reason']}")
+                else:
+                    crypto_name = m['symbol'].split('/')[0]
+                    confidence = validation['confidence']
+                    blocked_reasons.append(f"  ❌ {crypto_name}: FILTERED (Confidence: {confidence:.0%})")
+                    print(f"\n  ❌ {crypto_name}: FILTERED")
+                    print(f"     {validation['reason']}")
+
+        # Print filtered alerts summary
+        if blocked_reasons:
+            print("\n" + "="*60)
+            print("FILTERED ALERTS (False positive prevention):")
+            print("="*60)
+            for reason in blocked_reasons:
+                print(reason)
 
         if alerts_to_send:
-            print(f"\n⚠️ ALERT: {len(alerts_to_send)} cryptocurrencies above threshold!")
+            print(f"\n⚠️ ALERT: {len(alerts_to_send)}/{len(all_metrics)} cryptocurrencies passed validation!")
             print("📤 Sending Telegram notification...")
 
-            message = format_consolidated_alert(all_metrics, min_probability, thresholds=thresholds)
+            message = format_consolidated_alert(alerts_to_send, 0.0, thresholds=thresholds)  # Already filtered
 
             if message and send_telegram_message(bot_token, chat_id, message):
                 print("✅ Alert sent successfully!")
@@ -424,7 +597,7 @@ def main():
                 print("❌ Failed to send alert")
                 return 1
         else:
-            print(f"\n✅ No alerts needed (all below {min_probability:.2%} threshold)")
+            print(f"\n✅ No valid alerts (passed through {len(all_metrics)} cryptos with smart filters)")
 
             # Optional: send daily summary
             send_daily = os.environ.get('SEND_DAILY_SUMMARY', 'false').lower() == 'true'

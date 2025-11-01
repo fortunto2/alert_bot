@@ -535,19 +535,53 @@ Make sure you're using the virtual environment:
 5. **Designed for trading** - uses exchange APIs directly (CCXT), not Yahoo Finance
 6. **Proven in real markets**: +14.42% avg outperformance vs buy-and-hold in Oct 2025 crash
 
-## Testing & Backtesting
+## Backtesting with VectorBT
 
-Run backtest on real data:
+Run universal backtest on OKX perpetual futures data:
+
 ```bash
-# Test last 7 and 30 days of real data
-uv run python backtest_realdata.py
+# Test BTC with 90 days (default)
+uv run python backtest.py BTC
 
-# Output shows:
-# - Strategy vs Buy & Hold comparison
-# - Sharpe ratio and max drawdown
-# - Trade count and win rate
-# - Outperformance metric
+# Test TRUMP last 7 days
+uv run python backtest.py TRUMP --days 7
+
+# Test multiple cryptos with fresh data
+uv run python backtest.py ETH SOL XRP --fresh
+
+# Test with custom portfolio size
+uv run python backtest.py BTC --init-cash 50000
 ```
+
+**Features:**
+- Fetches fresh data via data_loader (smart cache: 1 hour expiry)
+- Uses gen11-47 strategy with configurable entry/exit thresholds
+- VectorBT Portfolio engine - fills 1M orders in 70-100ms
+- Compares strategy vs buy-and-hold
+- Configurable via CLI args or `.env` file
+
+**Threshold Configuration (.env):**
+```bash
+BACKTEST_ENTRY_TREND=0.5       # Enter when trend > 50%
+BACKTEST_ENTRY_CRASH=0.35      # AND crash prob < 35%
+BACKTEST_EXIT_CRASH=0.40       # Exit when crash > 40%
+BACKTEST_EXIT_TREND=0.30       # OR trend < 30%
+BACKTEST_INIT_CASH=10000       # Starting portfolio
+BACKTEST_FEES=0.001            # 0.1% per trade
+```
+
+**Example Results (Oct 3 - Nov 1, 2025):**
+```
+Symbol     |   Strategy |        B&H |    Outperformance
+-----------|------------|-----------|------------------
+SOL        |   -11.37%  |   -20.09% |      +8.72% ✅
+ETH        |   -10.06%  |   -13.46% |      +3.40% ✅
+BTC        |    -6.03%  |    -8.56% |      +2.53% ✅
+-----------|------------|-----------|------------------
+AVERAGE    |            |           |      +4.88% ✅
+```
+
+In falling markets, strategy reduces losses through intelligent crash detection.
 
 ## License
 

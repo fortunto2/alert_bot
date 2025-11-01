@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """
-Multi-Crypto Crash Monitor - Monitor crash probability for multiple cryptocurrencies.
+Multi-Crypto Crash Monitor - Monitor crash probability for perpetual futures.
+
+Uses REAL futures data (OKX) with funding rates - the most critical metric for crash detection.
+This is the production system for automated alerts on actual trading pairs.
 
 Usage:
     python multi_crash_monitor.py
 
 Features:
-- Monitors top cryptocurrencies simultaneously (BTC, ETH, SOL, XRP, ADA, DOGE, AVAX, DOT, LINK, LTC, TRUMP)
+- Monitors top cryptocurrencies on perpetual futures (OKX)
+- Includes funding rate analysis (critical for sentiment)
 - Smart caching - only refreshes data if cache is older than 1 hour
 - Sends consolidated Telegram alert with all warnings
 - Parallel processing for faster execution
+
+Data Source: OKX Perpetual Futures (live trading pairs)
+Exchange: OKX (most reliable for non-US traders)
 """
 
 import os
@@ -25,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(Path(__file__).parent))
 
 import pandas as pd
-from data_loader import fetch_crypto_data
+from data_loader_futures import fetch_crypto_futures_data
 
 # Import strategy module to use crash detection
 import importlib.util
@@ -33,37 +40,50 @@ spec = importlib.util.spec_from_file_location("strategy", Path(__file__).parent 
 strategy_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(strategy_module)
 
-# Top cryptocurrencies to monitor (excluding stablecoins)
+# Top cryptocurrencies to monitor - OKX perpetual futures format
+# Format: "BTC/USDT:USDT" for perpetual contracts
 TOP_CRYPTOS = [
-    "BTC-USD",    # Bitcoin
-    "ETH-USD",    # Ethereum
-    "SOL-USD",    # Solana
-    "XRP-USD",    # Ripple
-    "ADA-USD",    # Cardano
-    "DOGE-USD",   # Dogecoin
-    "AVAX-USD",   # Avalanche
-    "DOT-USD",    # Polkadot
-    "LINK-USD",   # Chainlink
-    "LTC-USD",    # Litecoin
-    "TRUMP-USD",  # Trump Meme Coin
+    "BTC/USDT:USDT",    # Bitcoin
+    "ETH/USDT:USDT",    # Ethereum
+    "SOL/USDT:USDT",    # Solana
+    "XRP/USDT:USDT",    # Ripple
+    "ADA/USDT:USDT",    # Cardano
+    "DOGE/USDT:USDT",   # Dogecoin
+    "AVAX/USDT:USDT",   # Avalanche
+    "DOT/USDT:USDT",    # Polkadot
+    "LINK/USDT:USDT",   # Chainlink
+    "LTC/USDT:USDT",    # Litecoin
 ]
+
+# Exchange to use for futures data
+EXCHANGE = "okx"
 
 # Cache expiry time in seconds (1 hour)
 CACHE_EXPIRY = 3600
 
 
-def get_cache_age(symbol: str, period: str = "1mo", interval: str = "1h") -> float:
+def get_cache_age(symbol: str, exchange: str = "okx", period: str = "1mo", interval: str = "1h") -> float:
     """
-    Get age of cached data in seconds.
+    Get age of cached futures data in seconds.
 
     Returns:
         Age in seconds, or float('inf') if cache doesn't exist
     """
     cache_dir = Path(__file__).parent / "datasets"
-    cache_file = cache_dir / f"{symbol}_{period}_{interval}.parquet"
 
-    if not cache_file.exists():
+    # Build cache filename following data_loader_futures pattern
+    # Format: {exchange}_{symbol_safe}_{timeframe}_{date}_{limit}.parquet
+    symbol_safe = symbol.replace("/", "-").replace(":", "_")
+
+    # Find any matching cache file (we don't know the exact limit/date without loading)
+    # Look for the most recent cache file for this symbol
+    cache_files = list(cache_dir.glob(f"{exchange}_{symbol_safe}_1h_*.parquet"))
+
+    if not cache_files:
         return float('inf')
+
+    # Use the most recently modified file
+    cache_file = max(cache_files, key=lambda p: p.stat().st_mtime)
 
     # Get file modification time
     mtime = cache_file.stat().st_mtime
@@ -101,14 +121,15 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str, parse_mode
         return False
 
 
-def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, thresholds: dict = None):
+def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, thresholds: dict = None, exchange: str = "okx"):
     """
-    Check crash probability for a single symbol.
+    Check crash probability for a single futures symbol.
 
     Args:
-        symbol: Trading pair symbol (e.g., "BTC-USD")
+        symbol: Trading pair symbol (e.g., "BTC/USDT:USDT" for perpetual futures)
         lookback_hours: How many hours of data to analyze
         thresholds: dict with 'pre_crash', 'early_warning', 'crisis' thresholds
+        exchange: Exchange to fetch from (okx, bybit, deribit, etc.)
 
     Returns:
         dict with crash metrics, or None if error
@@ -123,19 +144,21 @@ def check_crash_probability_for_symbol(symbol: str, lookback_hours: int = 500, t
             }
 
         # Check cache age
-        cache_age = get_cache_age(symbol)
+        cache_age = get_cache_age(symbol, exchange=exchange)
         force_refresh = cache_age > CACHE_EXPIRY
 
         if force_refresh:
-            print(f"  {symbol}: Cache expired ({cache_age/60:.1f} min old), downloading fresh data...")
+            print(f"  {symbol}: Cache expired ({cache_age/60:.1f} min old), downloading fresh futures data...")
         else:
-            print(f"  {symbol}: Using cache ({cache_age/60:.1f} min old)")
+            print(f"  {symbol}: Using cached futures data ({cache_age/60:.1f} min old)")
 
-        # Fetch data (will use cache if available and fresh)
-        df = fetch_crypto_data(
+        # Fetch FUTURES data with funding rates (critical for sentiment)
+        df = fetch_crypto_futures_data(
             symbol=symbol,
+            timeframe="1h",
             period="1mo",
-            interval="1h",
+            exchange=exchange,
+            include_funding=True,
             force_refresh=force_refresh
         )
 
@@ -334,9 +357,10 @@ def main():
     print(f"Alert threshold: {min_probability:.2%}")
     print(f"Alert levels: 🟡 ≥{thresholds['pre_crash']:.0%} | 🟠 ≥{thresholds['early_warning']:.0%} | 🔴 ≥{thresholds['crisis']:.0%}")
     print()
-    print("ℹ️  Data source: SPOT prices (Yahoo Finance)")
+    print(f"ℹ️  Data source: PERPETUAL FUTURES ({EXCHANGE.upper()})")
+    print("ℹ️  Includes funding rate analysis (critical for crash detection)")
     print("ℹ️  Crash probability = risk of PRICE DROP:")
-    print(f"   🔴 ≥{thresholds['crisis']:.0%} = SELL SPOT/SHORT FUTURES | 🟠 {thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%} = REDUCE | 🟡 {thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%} = CAUTION | 🟢 <{thresholds['pre_crash']:.0%} = NORMAL")
+    print(f"   🔴 ≥{thresholds['crisis']:.0%} = SHORT FUTURES / REDUCE LONGS | 🟠 {thresholds['early_warning']:.0%}-{thresholds['crisis']:.0%} = CAUTION | 🟡 {thresholds['pre_crash']:.0%}-{thresholds['early_warning']:.0%} = MONITOR | 🟢 <{thresholds['pre_crash']:.0%} = NORMAL")
     print()
 
     try:
@@ -344,9 +368,9 @@ def main():
         all_metrics = []
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            # Submit all tasks with thresholds
+            # Submit all tasks with thresholds and exchange
             future_to_symbol = {
-                executor.submit(check_crash_probability_for_symbol, symbol, thresholds=thresholds): symbol
+                executor.submit(check_crash_probability_for_symbol, symbol, thresholds=thresholds, exchange=EXCHANGE): symbol
                 for symbol in TOP_CRYPTOS
             }
 
@@ -368,7 +392,8 @@ def main():
         print("="*60)
 
         for metrics in sorted(all_metrics, key=lambda x: x['crash_probability'], reverse=True):
-            crypto_name = metrics['symbol'].replace('-USD', '')
+            # Extract crypto name from futures symbol (e.g., "BTC/USDT:USDT" -> "BTC")
+            crypto_name = metrics['symbol'].split('/')[0]
             prob = metrics['crash_probability']
             alert_status = "🔴 CRISIS" if prob >= thresholds['crisis'] else \
                           "🟠 HIGH" if prob >= thresholds['early_warning'] else \

@@ -415,22 +415,12 @@ get_adaptive_exit_thresholds(metrics):
 
 ### 4. backtest.py (Testing Tool)
 
-**Purpose:** Test strategy on historical data using REAL trained signals
+**Purpose:** Test strategy on historical data using trained signals from gen11-47
 
-**Critical Architecture Fix:**
-
-**WRONG (old version):**
+**How It Works:**
 ```python
-# Generated its own signals (NOT what was trained!)
-system = FuturesTradingStrategy(df)
-entries = (system.trend_strength > 0.5) & (system.crash_probability < 0.35)
-exits = (system.crash_probability > 0.40) | (system.trend_strength < 0.30)
-```
-
-**CORRECT (current version):**
-```python
-# Use REAL signals from trained strategy
-result_df = run_experiment(df)  # This is what was trained!
+# Get REAL signals from trained strategy
+result_df = run_experiment(df)
 
 # Extract trained signals
 entries = result_df['entry_signal']
@@ -438,23 +428,23 @@ exits = result_df['exit_signal']
 stop_percents = result_df['stop_loss_pct']
 position_sizes = result_df['position_size']
 
-# Use in Portfolio
+# Run VectorBT Portfolio simulation
 pf = vbt.Portfolio.from_signals(
     close=price,
     entries=entries,
     exits=exits,
-    size=position_sizes,      # Dynamic sizing!
-    sl_stop=stop_percents,    # Dynamic stops!
+    size=position_sizes,      # Dynamic sizing from strategy
+    sl_stop=stop_percents,    # ATR-based stops from strategy
     init_cash=10000,
     fees=0.001
 )
 ```
 
-**Why This Matters:**
-- Tests what was actually TRAINED
-- Includes dynamic position sizing (reduces risk)
-- Includes ATR-based stop loss (adapts to volatility)
-- Avoids "strategy overfitting" by using trained signals
+**Key Features:**
+- Uses trained signals from gen11-47 strategy
+- Dynamic position sizing (reduces risk in high volatility)
+- ATR-based stop loss (adapts to market conditions)
+- Tests on real OKX perpetual futures data
 
 **CLI Usage:**
 ```bash

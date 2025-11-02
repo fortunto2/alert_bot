@@ -146,7 +146,6 @@ dependencies = [
     { name = "pyarrow" },
     { name = "python-dotenv" },
     { name = "vectorbt" },
-    { name = "yfinance" },
 ]
 
 [package.metadata]
@@ -158,7 +157,6 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "vectorbt", specifier = ">=0.28.1" },
-    { name = "yfinance", specifier = ">=0.2.66" },
 ]
 
 [[package]]

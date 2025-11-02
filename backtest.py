@@ -1,10 +1,11 @@
 """
 Universal VectorBT backtest using REAL signals from trained strategy.
 Uses actual entry/exit from initial.py with dynamic sizing and stop loss.
+Fetches perpetual futures data from OKX using CCXT.
 
 Usage:
     uv run python backtest.py BTC                    # Test BTC, 90 days
-    uv run python backtest.py TRUMP --days 7         # Test TRUMP, 7 days
+    uv run python backtest.py BTC --days 7           # Test BTC, 7 days
     uv run python backtest.py ETH SOL XRP --fresh    # Fresh data
 """
 
@@ -24,7 +25,7 @@ from dotenv import load_dotenv
 # Add alert_bot to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data_loader_futures import fetch_crypto_data
+from data_loader_futures import fetch_crypto_futures_data
 from initial import run_experiment
 
 # Load environment
@@ -32,13 +33,13 @@ load_dotenv()
 
 
 def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.DataFrame:
-    """Fetch OKX perpetual futures data using data_loader."""
+    """Fetch perpetual futures data using CCXT."""
 
     print(f"📥 Fetching {symbol}/USDT perpetual futures data...")
 
     # Determine period
     if days <= 7:
-        period = "1mo"
+        period = "1w"
     elif days <= 30:
         period = "1mo"
     elif days <= 90:
@@ -48,17 +49,25 @@ def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.D
     else:
         period = "1y"
 
-    yf_symbol = f"{symbol}-USD"
+    # CCXT symbol format for perpetual futures
+    ccxt_symbol = f"{symbol}/USDT:USDT"
 
     try:
-        df = fetch_crypto_data(yf_symbol, period=period, interval="1h", force_refresh=force)
+        df = fetch_crypto_futures_data(
+            symbol=ccxt_symbol,
+            timeframe="1h",
+            period=period,
+            force_refresh=force,
+            include_funding=True,
+            exchange="okx"
+        )
 
         # Set datetime as index
         if 'datetime' in df.columns:
-            df['datetime'] = pd.to_datetime(df['datetime'])
+            df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
             df.set_index('datetime', inplace=True)
         else:
-            df.index = pd.to_datetime(df.index)
+            df.index = pd.to_datetime(df.index, utc=True)
 
         # Take last N days
         cutoff_date = pd.Timestamp.now(tz='UTC') - timedelta(days=days)
@@ -76,6 +85,8 @@ def fetch_futures_data(symbol: str, days: int = 90, force: bool = False) -> pd.D
 
     except Exception as e:
         print(f"   ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -198,10 +209,11 @@ def main():
     """Main entry point with CLI arguments."""
 
     parser = argparse.ArgumentParser(
-        description="VectorBT backtest using REAL trained signals from gen11-47",
+        description="VectorBT backtest using REAL trained signals from gen11-47\n"
+                    "Fetches perpetual futures data from OKX exchange via CCXT",
         epilog="Examples:\n"
                "  python backtest.py BTC\n"
-               "  python backtest.py TRUMP --days 7\n"
+               "  python backtest.py BTC --days 7\n"
                "  python backtest.py ETH SOL XRP --fresh",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

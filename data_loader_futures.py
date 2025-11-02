@@ -1,5 +1,5 @@
 """
-Data loader for crypto futures using CCXT (Binance, OKX, Bybit, etc).
+Data loader for crypto futures using CCXT (OKX, Binance, Bybit, etc).
 
 Features:
     - OHLCV data for perpetual futures contracts
@@ -9,17 +9,16 @@ Features:
     - Merging of funding rates with OHLCV data
 
 Usage:
-    # Fetch BTC futures from Binance
+    # Fetch BTC perpetual futures from OKX
     df = fetch_crypto_futures_data(
         symbol="BTC/USDT:USDT",
         timeframe="1h",
         period="1mo",
-        exchange="binance",
+        exchange="okx",
         include_funding=True
     )
 
-    # Get just BTC without futures features (SPOT only)
-    df = fetch_crypto_data(symbol="BTC-USD")
+Note: Uses OKX by default as Binance is blocked in some regions.
 """
 
 import warnings
@@ -38,12 +37,7 @@ try:
 except ImportError:
     CCXT_AVAILABLE = False
 
-# Try to import yfinance (for SPOT trading)
-try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
-except ImportError:
-    YFINANCE_AVAILABLE = False
+# yfinance removed - using CCXT for futures only
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -413,91 +407,3 @@ def fetch_crypto_futures_data(
         ohlcv_df['funding_rate'] = 0.0
 
     return ohlcv_df
-
-
-# ============================================================================
-# SPOT DATA LOADING (Yahoo Finance) - Fallback for development
-# ============================================================================
-
-def fetch_crypto_data(
-    symbol: str = "BTC-USD",
-    period: str = "1mo",
-    interval: str = "1h",
-    cache_dir: Optional[Path] = None,
-    force_refresh: bool = False,
-) -> pd.DataFrame:
-    """
-    Fetch cryptocurrency SPOT data from Yahoo Finance with caching.
-
-    NOTE: This is for SPOT market only, not suitable for futures trading.
-    For production, use fetch_crypto_futures_data() instead.
-
-    Args:
-        symbol: Trading pair symbol (e.g., "BTC-USD", "ETH-USD")
-        period: Time period to fetch (e.g., "1mo", "3mo", "1y", "2y")
-        interval: Data interval (e.g., "1h", "4h", "1d")
-        cache_dir: Directory to cache data
-        force_refresh: If True, force re-download
-
-    Returns:
-        DataFrame with OHLCV data
-    """
-    if not YFINANCE_AVAILABLE:
-        raise ImportError("yfinance is required. Install with: pip install yfinance")
-
-    if cache_dir is None:
-        cache_dir = DEFAULT_CACHE_DIR
-
-    cache_dir = Path(cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create cache filename
-    cache_file = cache_dir / f"{symbol}_{period}_{interval}.parquet"
-
-    # Try to load from cache
-    if not force_refresh and cache_file.exists():
-        print(f"Loading cached SPOT data from {cache_file}")
-        df = pd.read_parquet(cache_file)
-        return df
-
-    # Download data from Yahoo Finance
-    print(f"Downloading {symbol} SPOT data from Yahoo Finance...")
-    print(f"  Period: {period}, Interval: {interval}")
-
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(period=period, interval=interval)
-
-    if df.empty:
-        raise ValueError(f"No data returned for {symbol}. Check symbol name.")
-
-    # Clean up column names
-    df.columns = [col.lower() for col in df.columns]
-
-    # Reset index to make datetime a column
-    df = df.reset_index()
-
-    # Rename datetime column
-    if 'date' in df.columns:
-        df = df.rename(columns={'date': 'datetime'})
-    elif 'datetime' not in df.columns:
-        raise ValueError("Could not find datetime column")
-
-    # Ensure datetime is timezone-aware UTC
-    if df['datetime'].dt.tz is None:
-        df['datetime'] = df['datetime'].dt.tz_localize('UTC')
-    else:
-        df['datetime'] = df['datetime'].dt.tz_convert('UTC')
-
-    # Select required columns
-    df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']]
-
-    # Add dummy funding_rate for compatibility
-    df['funding_rate'] = 0.0
-
-    print(f"Downloaded {len(df)} candles from {df['datetime'].iloc[0]} to {df['datetime'].iloc[-1]}")
-
-    # Save to cache
-    df.to_parquet(cache_file)
-    print(f"Saved to cache: {cache_file}")
-
-    return df

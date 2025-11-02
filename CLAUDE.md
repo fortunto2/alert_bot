@@ -73,12 +73,12 @@ grep CRON /var/log/syslog
 - Configured via environment variables
 - Always forces data refresh (force_refresh=True)
 
-**data_loader.py** - Data fetching and caching
-- Downloads **SPOT market** crypto data from Yahoo Finance using yfinance
+**data_loader_futures.py** - Futures data fetching via CCXT
+- Downloads **perpetual futures** data from OKX exchange using CCXT
 - Caches data locally in `datasets/` as parquet files
-- Adds basic derived features (returns, momentum, volume metrics)
-- Provides `fetch_crypto_data()` and `add_basic_features()`
-- **Note:** Yahoo Finance provides SPOT prices, NOT futures prices
+- Fetches OHLCV + funding rates (critical for futures trading)
+- Provides `fetch_crypto_futures_data()`, `fetch_futures_ohlcv()`, `fetch_funding_rates()`
+- **Note:** Uses OKX because Binance is blocked in restricted regions
 
 **initial.py** - Gen11 trading strategy (VectorBT-based)
 - `AdaptiveTradingSystem` class implements modular strategy
@@ -159,14 +159,15 @@ Data is cached as parquet files in `datasets/` with naming: `{symbol}_{period}_{
 - Useful for testing or when absolute latest data is required
 
 **Development:**
-- Use `force_refresh=False` in `fetch_crypto_data()` to use cache
+- Use `force_refresh=False` in `fetch_crypto_futures_data()` to use cache
 - Avoids rate limits during development
+- OKX used instead of Binance (geo-restrictions)
 
 ## Dependencies
 
 All dependencies managed via uv/pyproject.toml:
 - pandas (>=2.3.3)
-- yfinance (>=0.2.66) - Yahoo Finance API
+- ccxt (>=4.5.14) - Exchange API for futures trading
 - vectorbt (>=0.28.1) - Fast backtesting
 - pyarrow (>=22.0.0) - Parquet support
 - fastparquet (>=2024.11.0) - Parquet support

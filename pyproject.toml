@@ -12,5 +12,4 @@ dependencies = [
     "pyarrow>=22.0.0",
     "python-dotenv>=1.2.1",
     "vectorbt>=0.28.1",
-    "yfinance>=0.2.66",
 ]

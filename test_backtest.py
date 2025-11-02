@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data_loader_futures import fetch_crypto_data
+from data_loader_futures import fetch_crypto_futures_data
 from initial import run_experiment
 import pandas as pd
 
@@ -21,11 +21,17 @@ def test_signals_from_strategy():
     print("="*70)
 
     # Fetch small dataset
-    print("\n1. Fetching BTC data (last 7 days)...")
-    df = fetch_crypto_data('BTC-USD', period='1mo', interval='1h', force_refresh=False)
-    df['datetime'] = pd.to_datetime(df['datetime']) if 'datetime' in df.columns else df.index
+    print("\n1. Fetching BTC futures data (last 7 days)...")
+    df = fetch_crypto_futures_data(
+        symbol='BTC/USDT:USDT',
+        timeframe='1h',
+        period='1w',
+        force_refresh=False,
+        include_funding=True,
+        exchange='okx'
+    )
+    df['datetime'] = pd.to_datetime(df['datetime'], utc=True) if 'datetime' in df.columns else df.index
     df.set_index('datetime', inplace=True) if 'datetime' in df.columns else None
-    df = df.tail(168)  # Last 7 days
 
     print(f"   ✅ Got {len(df)} candles")
 
@@ -78,11 +84,17 @@ def test_backtest_uses_real_signals():
     from backtest import run_backtest
 
     # Fetch data
-    print("\n1. Fetching SOL data (last 7 days)...")
-    df = fetch_crypto_data('SOL-USD', period='1mo', interval='1h', force_refresh=False)
-    df['datetime'] = pd.to_datetime(df['datetime']) if 'datetime' in df.columns else df.index
+    print("\n1. Fetching SOL futures data (last 7 days)...")
+    df = fetch_crypto_futures_data(
+        symbol='SOL/USDT:USDT',
+        timeframe='1h',
+        period='1w',
+        force_refresh=False,
+        include_funding=True,
+        exchange='okx'
+    )
+    df['datetime'] = pd.to_datetime(df['datetime'], utc=True) if 'datetime' in df.columns else df.index
     df.set_index('datetime', inplace=True) if 'datetime' in df.columns else None
-    df = df.tail(168)
 
     print(f"   ✅ Got {len(df)} candles")
 

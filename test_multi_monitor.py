@@ -8,7 +8,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data_loader_futures import fetch_crypto_data
 from multi_crash_monitor import check_crash_probability_for_symbol, get_adaptive_exit_thresholds
 import pandas as pd
 

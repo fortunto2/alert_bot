@@ -1,176 +1,408 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidelines for Claude Code when working with this crypto crash monitoring system.
+
+---
 
 ## Project Overview
 
-Crypto Crash Monitor - Real-time cryptocurrency crash probability detector with Telegram alerts using Gen11 strategy. This system monitors 11 cryptocurrencies (BTC, ETH, SOL, XRP, ADA, DOGE, AVAX, DOT, LINK, LTC, TRUMP) using **SPOT market data** from Yahoo Finance and sends consolidated Telegram notifications based on risk levels.
+**Crypto Crash Monitor** - Real-time alert system using trained strategy from ShinkaEvolve. Monitors multiple cryptos using **OKX perpetual futures** (CCXT) and sends Telegram alerts based on crash probability.
+
+**Tech Stack:**
+- Data: OKX perpetual futures via CCXT (NOT SPOT, NOT Yahoo Finance)
+- Strategy: Trained model from initial.py (can be any generation/version)
+- Alerts: multi_crash_monitor.py → Telegram
+- Testing: backtest.py → VectorBT Portfolio
+- Cache: Smart 1h expiry for performance
+
+**⚠️ IMPORTANT:** For strategy details, performance metrics, and feature importance → see [README.md](README.md)
+
+---
+
+## System Architecture
+
+```
+Data Layer              Strategy Engine          Application Layer
+─────────────          ────────────────         ──────────────────
+data_loader_futures    initial.py               multi_crash_monitor.py
+(OKX + CCXT)          (Trained strategy)        (Telegram alerts)
+     │                       │                           │
+     │                       │                   backtest.py
+     │                       │                   (VectorBT testing)
+     └───────────────────────┴──────────────────────────┘
+         Shared data pipeline via fetch_crypto_futures_data()
+```
+
+### Core Files
+
+| File | Role | Usage |
+|------|------|-------|
+| **data_loader_futures.py** | Fetch OKX futures + funding rates | All components |
+| **initial.py** | Strategy engine (indicators + signals) | Source of truth |
+| **multi_crash_monitor.py** | Alert system (production) | Cron job |
+| **backtest.py** | Testing tool | Validation |
+
+---
 
 ## Essential Commands
 
-### Development Setup
+### Development
 ```bash
-# Install dependencies (uses uv package manager)
+# Setup
 uv sync
+cp .env.example .env && nano .env
 
-# Set up environment variables
-cp .env.example .env  # Then edit with your Telegram credentials
-nano .env
-
-# Test multi-crypto monitor (recommended)
+# Test monitoring
 uv run python multi_crash_monitor.py
 
-# Test single BTC monitor (legacy)
-uv run python crash_monitor.py
+# Test backtesting
+uv run python backtest.py BTC --days 7
+uv run python backtest.py BTC ETH SOL --days 30 --fresh
 
-# Run data loader example
-uv run python data_loader.py
+# Run tests
+uv run python test_backtest.py
+uv run python test_multi_monitor.py
 ```
 
-### Cron Setup
+### Deployment
 ```bash
-# Automated setup (recommended)
-chmod +x setup_cron.sh
+# Setup hourly cron
 ./setup_cron.sh
 
-# Manual crontab entry for multi-crypto monitor (recommended)
-0 * * * * cd /home/rustam/alert_bot && /home/rustam/.local/bin/uv run python multi_crash_monitor.py >> /tmp/multi_crypto_monitor.log 2>&1
-
-# Manual crontab entry for single BTC monitor (legacy)
-0 * * * * cd /home/rustam/alert_bot && /home/rustam/.local/bin/uv run python crash_monitor.py >> /tmp/crash_monitor.log 2>&1
-```
-
-### Monitoring
-```bash
-# View multi-crypto monitor logs
+# Check logs
 tail -f /tmp/multi_crypto_monitor.log
-
-# View single BTC monitor logs
-tail -f /tmp/crash_monitor.log
-
-# Check cron status
-crontab -l
-grep CRON /var/log/syslog
 ```
 
-## Architecture
+---
 
-### Core Components
+## Data Flow (High-Level)
 
-**multi_crash_monitor.py** - Multi-cryptocurrency monitoring script (RECOMMENDED)
-- Monitors 11 cryptocurrencies: BTC, ETH, SOL, XRP, ADA, DOGE, AVAX, DOT, LINK, LTC, TRUMP
-- Smart caching: only refreshes data if cache is older than 1 hour (3600 seconds)
-- Parallel processing using ThreadPoolExecutor (max 5 workers)
-- Consolidated Telegram alerts showing all cryptos above threshold
-- Three alert levels: СРЕДНИЙ (≥20%), ВЫСОКИЙ (≥40%), КРИТИЧЕСКИЙ (≥60%)
-- Uses same strategy and data loader as single monitor
+### 1. Data Collection (data_loader_futures.py)
 
-**crash_monitor.py** - Single BTC monitoring script (LEGACY)
-- Fetches BTC data via `data_loader.py`
-- Uses `initial.py` strategy for crash detection
-- Sends Telegram alerts using stdlib only (urllib, no external deps)
-- Three alert levels: СРЕДНИЙ (≥20%), ВЫСОКИЙ (≥40%), КРИТИЧЕСКИЙ (≥60%)
-- Configured via environment variables
-- Always forces data refresh (force_refresh=True)
+**Function:** `fetch_crypto_futures_data(symbol, timeframe, period, exchange="okx")`
 
-**data_loader_futures.py** - Futures data fetching via CCXT
-- Downloads **perpetual futures** data from OKX exchange using CCXT
-- Caches data locally in `datasets/` as parquet files
-- Fetches OHLCV + funding rates (critical for futures trading)
-- Provides `fetch_crypto_futures_data()`, `fetch_futures_ohlcv()`, `fetch_funding_rates()`
-- **Note:** Uses OKX because Binance is blocked in restricted regions
+**Process:**
+1. Check cache age (< 1h → use cache, ≥ 1h → fetch fresh)
+2. Fetch via CCXT: OHLCV + funding rates from OKX
+3. Merge on timestamp, save as Parquet
+4. Return DataFrame with `[datetime, open, high, low, close, volume, funding_rate]`
 
-**initial.py** - Gen11 trading strategy (VectorBT-based)
-- `AdaptiveTradingSystem` class implements modular strategy
-- Three signal generators: trend following, mean reversion, crash protection
-- Market regime detection (trending/ranging/crisis)
-- Crash probability calculation using weighted composite of 5 indicators:
-  - Volatility spike (40% weight)
-  - Price acceleration (20% weight)
-  - Volume divergence (20% weight)
-  - RSI extremes (15% weight)
-  - Recent price drop (5% weight)
-- Dynamic position sizing based on regime and crash probability
-- Used by crash_monitor.py via dynamic import
+**Why OKX Perpetual Futures:**
+- Funding rates = market sentiment (critical for crash detection)
+- 24/7 liquid markets
+- OKX used (Binance blocked in some regions)
 
-### Data Flow
+### 2. Strategy Computation (initial.py)
 
-1. **crash_monitor.py:check_crash_probability()** calls `fetch_crypto_data()` to get latest BTC data
-2. Creates `AdaptiveTradingSystem` instance from `initial.py`
-3. Extracts latest crash_probability, warning flags, and technical indicators
-4. If crash_probability ≥ threshold, formats alert message and sends via Telegram
-5. Returns metrics dict with timestamp, price, RSI, ATR ratio, etc.
+**Two components - can be ANY trained strategy:**
 
-### Telegram Integration
+#### A. Strategy Class (e.g., FuturesTradingStrategy)
+- Computes indicators (RSI, MACD, BB, ATR, OBV, ADX, funding metrics, etc.)
+- Calculates crash_probability (composite of multiple factors)
+- Detects market regime (BULL/BEAR/CRASH/VOLATILE)
 
-- Uses pure stdlib (urllib.request, no libraries)
-- `send_telegram_message()` posts directly to Telegram Bot API
-- Markdown formatting for rich alerts
-- Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
+#### B. run_experiment(df) Function
+- Creates strategy instance
+- Generates entry/exit signals (logic depends on trained model)
+- Calculates dynamic position_size and stop_loss_pct
+- Runs VectorBT Portfolio backtest
+- **Returns DataFrame with ALL features + signals**
 
-### Environment Configuration
+**⚠️ This is SOURCE OF TRUTH - backtest.py MUST use these signals!**
 
-Required:
-- `TELEGRAM_BOT_TOKEN` - Bot token from @BotFather
-- `TELEGRAM_CHAT_ID` - Numeric chat ID (get from /getUpdates)
+### 3. Application Layer
 
-Optional:
-- `CRASH_ALERT_THRESHOLD` - Minimum probability to trigger alert (default: 0.2)
-- `SEND_DAILY_SUMMARY` - Send daily update regardless of alert (default: false)
-- `DAILY_SUMMARY_HOUR` - UTC hour for daily summary (default: 12)
+#### Monitor (multi_crash_monitor.py)
+```python
+# For each crypto:
+1. Fetch data (smart cache)
+2. Create Strategy(df)
+3. Extract crash_probability + metrics
+4. If ≥ threshold → send Telegram alert
 
-## Key Technical Details
+# No VectorBT Portfolio - just metrics extraction
+```
 
-### VectorBT Strategy Structure
+#### Backtest (backtest.py)
+```python
+# For each crypto:
+1. Fetch data
+2. result_df = run_experiment(df)  # Get REAL trained signals
+3. Extract: entry_signal, exit_signal, stop_loss_pct, position_size
+4. Run vbt.Portfolio.from_signals() with extracted signals
+5. Report metrics vs buy-and-hold
+```
 
-The `initial.py` module contains an EVOLVE-BLOCK section designed for LLM-based strategy evolution. Key indicators used:
-- RSI (14 period)
-- MACD (12/26/9)
-- Bollinger Bands (20 period, 2 std)
-- ATR (short: 5, long: 20)
-- Moving averages (SMA 20/50, EMA 50)
-- Multi-timeframe EMA (4h resampled)
+---
 
-All indicators are pre-computed in `_compute_base_indicators()` for performance.
+## Technical Details
 
-### Alert System Logic
+### 1. data_loader_futures.py
 
-The crash detection system uses a smoothed composite probability:
-1. Calculate 5 binary signals
-2. Apply weighted sum (weights sum to 1.0)
-3. Smooth with 3-period rolling mean
-4. Generate three warning levels (0.2, 0.4, 0.6 thresholds)
+**Main API:**
+```python
+fetch_crypto_futures_data(
+    symbol="BTC/USDT:USDT",    # Perpetual futures format
+    timeframe="1h",
+    period="1mo",
+    include_funding=True,
+    exchange="okx",            # Always use OKX
+    force_refresh=False
+)
+```
 
-The monitor sends alerts when current crash_probability crosses the threshold, with recommendations based on severity.
+**Caching:**
+- File: `datasets/okx_{symbol}_{timeframe}_{start_date}_{limit}.parquet`
+- Smart cache in multi_crash_monitor: checks file mtime, refreshes if > 1h old
+- Development: use `force_refresh=False` to avoid rate limits
 
-### Caching Strategy
+**Funding Rates:**
+- Updated every 8h (OKX)
+- Positive: longs pay shorts (bullish sentiment)
+- Negative: shorts pay longs (bearish panic)
 
-Data is cached as parquet files in `datasets/` with naming: `{symbol}_{period}_{interval}.parquet`
+### 2. initial.py
 
-**Multi-Crypto Monitor (Smart Caching):**
-- Checks file modification time via `get_cache_age()`
-- Only refreshes if cache is older than 1 hour (CACHE_EXPIRY = 3600 seconds)
-- Dramatically reduces API calls and speeds up execution
-- All 11 cryptos cached after first run
+**⚠️ Strategy-specific - see README.md for current model details**
 
-**Single BTC Monitor (Legacy):**
-- Always uses `force_refresh=True` to get latest data
-- Downloads fresh data every run
-- Useful for testing or when absolute latest data is required
+**Generic structure:**
+```python
+class SomeStrategy:
+    def __init__(self, df):
+        self._compute_indicators()
+        self._compute_crash_probability()
+        self._detect_market_regime()
 
-**Development:**
-- Use `force_refresh=False` in `fetch_crypto_futures_data()` to use cache
-- Avoids rate limits during development
-- OKX used instead of Binance (geo-restrictions)
+    # Methods for indicators, signals, etc.
 
-## Dependencies
+def run_experiment(df):
+    """
+    SOURCE OF TRUTH for trained signals.
+    Always use this for backtest.py!
 
-All dependencies managed via uv/pyproject.toml:
-- pandas (>=2.3.3)
-- ccxt (>=4.5.14) - Exchange API for futures trading
-- vectorbt (>=0.28.1) - Fast backtesting
-- pyarrow (>=22.0.0) - Parquet support
-- fastparquet (>=2024.11.0) - Parquet support
-- python-dotenv (>=1.2.1) - Environment loading
+    Returns: DataFrame with entry_signal, exit_signal,
+             stop_loss_pct, position_size + all features
+    """
+    strategy = SomeStrategy(df)
+    # Generate signals
+    # Run VectorBT backtest
+    return result_df
+```
 
-Python 3.13+ required.
+### 3. multi_crash_monitor.py
+
+**Key function:**
+```python
+check_crash_probability_for_symbol(symbol, lookback_hours, thresholds, exchange):
+    """
+    Returns dict with 16 metrics:
+    - symbol, timestamp, price, change_24h
+    - crash_probability, pre_crash_warning, early_warning, crisis_alert
+    - rsi, atr_ratio, volatility, trend_strength, momentum_strength
+    - market_strength, funding_stress, vol_ratio_4h
+    """
+```
+
+**Why no Portfolio here:**
+- Monitoring system, not trading system
+- Only extracts crash_probability for alerts
+- Portfolio simulation only in backtest.py
+
+### 4. backtest.py
+
+**Critical:** MUST use signals from `run_experiment(df)`, NOT create new ones!
+
+```python
+def run_backtest(symbol, df):
+    # Get REAL trained signals
+    result_df = run_experiment(df)
+
+    # Extract (don't recreate!)
+    entries = result_df['entry_signal']
+    exits = result_df['exit_signal']
+    stop_percents = result_df['stop_loss_pct']
+    position_sizes = result_df['position_size']
+
+    # Simulate with extracted signals
+    pf = vbt.Portfolio.from_signals(...)
+```
+
+**CLI:**
+```bash
+python backtest.py BTC                    # 90 days default
+python backtest.py BTC ETH SOL --days 7   # Multi-crypto
+python backtest.py BTC --fresh            # Bypass cache
+```
+
+---
+
+## Configuration (.env)
+
+**Required:**
+```bash
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+**Alert thresholds (adjust per strategy):**
+```bash
+CRASH_ALERT_PRE_CRASH=0.2       # Yellow warning
+CRASH_ALERT_EARLY_WARNING=0.4   # Orange alert
+CRASH_ALERT_CRISIS=0.6          # Red crisis
+CRASH_ALERT_THRESHOLD=0.4       # Send when ≥ this
+```
+
+**Backtest thresholds (match trained strategy):**
+```bash
+BACKTEST_ENTRY_TREND=0.5        # Entry conditions
+BACKTEST_ENTRY_CRASH=0.35
+BACKTEST_EXIT_CRASH=0.40        # Exit conditions
+BACKTEST_EXIT_TREND=0.30
+BACKTEST_INIT_CASH=10000
+BACKTEST_FEES=0.001
+```
+
+---
+
+## Testing
+
+### Unit Tests
+
+**test_backtest.py** - Validates backtest architecture:
+```bash
+uv run python test_backtest.py
+```
+Checks:
+1. run_experiment() returns required columns
+2. Backtest uses REAL signals (not new ones)
+3. Adaptive thresholds work
+
+**test_multi_monitor.py** - Validates monitor:
+```bash
+uv run python test_multi_monitor.py
+```
+Checks:
+1. Correct metrics extraction
+2. All required fields present
+3. Multiple symbols processed correctly
+
+---
+
+## Common Pitfalls
+
+### ❌ DON'T: Create new signals in backtest
+```python
+# WRONG - creates new signals
+entries = df['trend'] > 0.5
+exits = df['crash'] > 0.4
+```
+
+### ✅ DO: Use trained signals
+```python
+# CORRECT - uses trained signals
+result_df = run_experiment(df)
+entries = result_df['entry_signal']
+exits = result_df['exit_signal']
+```
+
+### ❌ DON'T: Run Portfolio in monitor
+```python
+# WRONG - monitor is not a trader
+pf = vbt.Portfolio.from_signals(...)  # NO!
+```
+
+### ✅ DO: Extract metrics only
+```python
+# CORRECT - monitor extracts crash_probability
+strategy = FuturesTradingStrategy(df)
+crash_prob = strategy.crash_probability.iloc[-1]
+```
+
+### ❌ DON'T: Use SPOT or Yahoo Finance
+```python
+# WRONG - removed from codebase
+df = fetch_crypto_data('BTC-USD')  # Function doesn't exist!
+```
+
+### ✅ DO: Use OKX perpetual futures
+```python
+# CORRECT
+df = fetch_crypto_futures_data('BTC/USDT:USDT', exchange='okx')
+```
+
+### ❌ DON'T: Hardcode strategy details in CLAUDE.md
+```python
+# WRONG - strategy changes, CLAUDE.md becomes outdated
+```
+
+### ✅ DO: Reference README.md for strategy details
+```markdown
+For current strategy details → see README.md
+```
+
+---
+
+## Development Workflow
+
+### Adding New Features
+
+1. **Modify data_loader_futures.py** - if data source changes
+2. **Modify initial.py** - if strategy/indicators change
+3. **Update README.md** - document new strategy details
+4. **Run tests** - verify backtest still uses trained signals
+5. **Update .env.example** - if new thresholds needed
+
+### Changing Strategy
+
+1. **Train new model** in ShinkaEvolve
+2. **Update initial.py** with new strategy class
+3. **Update README.md** with new performance metrics
+4. **Adjust .env thresholds** if needed
+5. **Run tests** - verify integration works
+
+### CLAUDE.md stays generic - no need to update!
+
+---
+
+## Quick Reference
+
+**Get Telegram credentials:**
+```
+1. @BotFather → /newbot
+2. Get token
+3. Send message to bot
+4. Visit: https://api.telegram.org/bot<TOKEN>/getUpdates
+5. Copy chat_id
+```
+
+**File structure:**
+```
+alert_bot/
+├── data_loader_futures.py    # OKX data via CCXT
+├── initial.py                # Trained strategy (SOURCE OF TRUTH)
+├── multi_crash_monitor.py    # Telegram alerts (production)
+├── backtest.py               # VectorBT testing
+├── test_*.py                 # Unit tests
+├── .env                      # Configuration
+├── CLAUDE.md                 # This file (generic instructions)
+├── README.md                 # Strategy details (model-specific)
+└── datasets/                 # Cached Parquet files
+```
+
+**Dependencies:**
+```toml
+ccxt>=4.5.14          # OKX perpetual futures
+pandas>=2.3.3         # Data manipulation
+vectorbt>=0.28.1      # Backtesting
+python-dotenv>=1.2.1  # Config
+# NO yfinance - removed!
+```
+
+---
+
+## For Strategy Details
+
+**Current model, performance, feature importance, training results:**
+→ See [README.md](README.md)
+
+**This keeps CLAUDE.md generic and README.md always up-to-date with latest strategy.**
